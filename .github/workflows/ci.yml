@@ -35,8 +35,8 @@ jobs:
           cp esp32s3/build-nb/iq-source.bin iq-source-nb.bin
           sha256sum iq-source-nb.bin | tee SHA256SUMS
           # the image must also boot from flash: a flash-mapped data segment with the app descriptor first, and a code segment
-          python -m esptool image-info iq-source-nb.bin | tee image-info.txt
-          grep -q "0x3c000020 .*DROM" image-info.txt && grep -q "0x42000020 .*IROM" image-info.txt
+          xtensa-esp32s3-elf-objdump -h esp32s3/build-nb/iq-source.elf | tee sections.txt
+          grep -qE "\.flash\.rodata .* 3c000020 " sections.txt && grep -qE "\.flash\.text .* 42000020 " sections.txt
       - name: The original FPGA firmware is unchanged
         run: |
           . "$IDF_PATH/export.sh"
