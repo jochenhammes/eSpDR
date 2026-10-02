@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r host/python/requirements-dev.txt
+      - name: Decimator is bit-exact against the integer model
+        run: python esp32s3/tools/dsp_selftest.py
+      - name: Receiver tool against a simulated ESP
+        run: python host/python/espdr_nb.py selftest
+      - name: rtl_tcp bridge against a simulated ESP
+        run: python host/python/espdr_rtltcp.py selftest
+
+  firmware:
+    runs-on: ubuntu-latest
+    container: espressif/idf:v5.5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: Build the narrowband image
+        run: |
+          . "$IDF_PATH/export.sh"
+          make -C esp32s3 NARROWBAND=1 ESPTOOL="python -m esptool"
+          cp esp32s3/build-nb/iq-source.bin iq-source-nb.bin
+          sha256sum iq-source-nb.bin | tee SHA256SUMS
+      - name: The original FPGA firmware is unchanged
+        run: |
+          . "$IDF_PATH/export.sh"
+          make -C esp32s3 ESPTOOL="python -m esptool"
+          # f279bf8 is the upstream commit this work started from; its default build must be byte-identical
+          git worktree add /tmp/base f279bf8
+          make -C /tmp/base/esp32s3 ESPTOOL="python -m esptool"
+          cmp esp32s3/build/iq-source.bin /tmp/base/esp32s3/build/iq-source.bin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: narrowband-image
+          path: |
+            iq-source-nb.bin
+            SHA256SUMS

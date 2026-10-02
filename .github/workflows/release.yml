@@ -1,0 +1,29 @@
+name: Release
+
+# Push a tag such as narrowband-v0.1.0 to build the image and publish it with its checksum.
+on:
+  push:
+    tags: ["narrowband-v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    container: espressif/idf:v5.5
+    steps:
+      - uses: actions/checkout@v4
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: Build
+        run: |
+          . "$IDF_PATH/export.sh"
+          make -C esp32s3 NARROWBAND=1 ESPTOOL="python -m esptool"
+          cp esp32s3/build-nb/iq-source.bin iq-source-nb.bin
+          sha256sum iq-source-nb.bin > SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            iq-source-nb.bin
+            SHA256SUMS
+          generate_release_notes: true

@@ -29,6 +29,19 @@ ESP32-S3 ADC ──16 GPIO lines──▶ Alchitry Au FPGA ──FT600 USB 3─�
 * `iqstream serve` shows a live spectrum and waterfall in a web browser,
   with receiver controls, live stream counters and DDR buffer usage.
 
+## Two ways to run it
+
+| | Full design (this README) | [Narrowband mode](docs/NARROWBAND.md) |
+|---|---|---|
+| Span | 80 MHz (2400 to 2480 MHz) | about 200 kHz anywhere in 2.21 to 2.79 GHz |
+| Hardware | ESP32-S3 board + Alchitry Au FPGA + Ft + Br + wiring | one ESP32-S3 board and a USB cable |
+| Data rate | 95 to 100 MB/s over USB 3 | 0.5 MB/s over USB Full-Speed |
+| Host software | `iqstream` (C++) with a live web spectrum | Python tools, an `rtl_tcp` bridge for SDR++ and others |
+| Build | `make -C esp32s3`, Vivado, `make -C host` | `make -C esp32s3 NARROWBAND=1`, or a prebuilt image |
+
+The narrowband mode shares the radio and capture code with the full design; plain `make -C esp32s3` still builds the
+original firmware, byte-identical to before.
+
 ## About this project
 
 This project is a technical capability proof of concept and a starting point
@@ -39,6 +52,9 @@ and supervision.
 The entire web frontend was
 one-shotted by Opus 5.5 with the prompt "make an SDR#-inspired WebGL-based web
 frontend." Getting the actual acquisition working took _much_ longer.
+
+The [narrowband mode](docs/NARROWBAND.md) was added in a fork by Jochen Hammes, with Claude (Anthropic) as the coding
+assistant, and tested on real hardware.
 
 ## How it works
 
@@ -215,6 +231,7 @@ Each part builds on its own:
 | ESP32-S3 firmware | ESP-IDF v5.5 (`. $IDF_PATH/export.sh`) | `make -C esp32s3` | `esp32s3/build/iq-source.bin` |
 | FPGA image | Vivado 2025.2 (`vivado` on `PATH`, or `VIVADO=...`) | `fpga/build.sh` (about 30 min) | `fpga/build/iqstream.bit` |
 | Host tool | C++17, zlib, FFTW3 single precision (`libfftw3-dev`), [FTDI D3XX](https://ftdichip.com/drivers/d3xx-drivers/) for Linux | `make -C host D3XX_DIR=/path/to/d3xx` | `host/build/iqstream` |
+| ESP32-S3 narrowband firmware (no FPGA) | ESP-IDF v5.5 | `make -C esp32s3 NARROWBAND=1` | `esp32s3/build-nb/iq-source.bin` |
 | Tests | C++17, zlib, FFTW3, Verilator 5 | `tests/run.sh` (`--long` adds a full-size run) | pass/fail |
 
 From the repository root, add the built host tool to your shell's `PATH` for
@@ -422,7 +439,10 @@ protocol/          shared definitions: control protocol, link format, record for
 esp32s3/           ESP32-S3 firmware (bare metal, both cores, RAM image)
 fpga/              RTL, constraints, MIG configuration and Vivado build
 host/              iqstream host tool; host/web: the browser UI, compiled into it
+host/python/       narrowband mode: receiver, rtl_tcp bridge, firmware loader
+host/udev/         udev rule for the narrowband mode's USB port
 tests/             codec, spectrum, web server, link-receiver and RTL stream tests
+docs/              RADIO.md, CLOCK-SYNC.md, LO-EXTENSION.md, and the narrowband mode's NARROWBAND.md and NARROWBAND-INTERNALS.md
 docs/images/       wiring diagram and screenshots used by this README
 ```
 
