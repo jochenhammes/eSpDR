@@ -77,7 +77,7 @@ APP_SOURCES := main.c platform.c radio.c capture.c libc.c
 ifeq ($(NARROWBAND),1)
 # The decimator is built twice: core 1 runs its own copy from its own
 # instruction bank, so the cores never contend for instruction fetches.
-APP_SOURCES += dsp.c stream.c
+APP_SOURCES += dsp.c stream.c app_desc.c
 NB_OBJECTS := $(BUILD)/dsp_core1.o
 endif
 SDK_SOURCES := \
@@ -94,13 +94,27 @@ OBJECTS := \
 	$(BUILD)/startup.o $(BUILD)/vectors.o $(BUILD)/transmit_lane0.o $(BUILD)/transmit_lane1.o \
 	$(NB_OBJECTS)
 
+# The narrowband image can also boot from flash. The ROM loader refuses to load segments into the first 32 KB
+# of instruction RAM (0x40370000-0x40377FFF, which it keeps for the flash cache), where the FPGA firmware keeps its
+# exception vectors. The narrowband link moves them into core 1's bank; the default link is unchanged.
+ifeq ($(NARROWBAND),1)
+MEMORY_LD := $(BUILD)/memory.ld
+$(BUILD)/memory.ld: memory.ld | $(BUILD)
+	sed -E -e 's/^(    vectors \(RX\)  : ORIGIN = )0x40374000, LENGTH = 0x4000/\10x4037C000, LENGTH = 0x1000/' \
+		-e '/^MEMORY \{/a\    drom    (R)   : ORIGIN = 0x3C000020, LENGTH = 0x1000\n    irom    (RX)  : ORIGIN = 0x42000020, LENGTH = 0x1000' \
+		-e '/^SECTIONS \{/a\    .flash.rodata : { KEEP(*(.rodata.app_desc)) } > drom\n    .flash.text : { KEEP(*(.flash.text)) } > irom' $< > $@
+else
+MEMORY_LD := memory.ld
+endif
+
 ROM_LD := $(IDF)/esp_rom/esp32s3/ld
-LINKER_SCRIPTS := -T memory.ld -T $(ROM_LD)/esp32s3.rom.ld -T $(BUILD)/rom-libc.ld \
+LINKER_SCRIPTS := -T $(MEMORY_LD) -T $(ROM_LD)/esp32s3.rom.ld -T $(BUILD)/rom-libc.ld \
 	-T $(ROM_LD)/esp32s3.rom.libgcc.ld -T $(ROM_LD)/esp32s3.rom.api.ld \
 	-T $(IDF)/soc/esp32s3/ld/esp32s3.peripherals.ld
 LIBRARIES := $(IDF)/esp_phy/lib/esp32s3/libphy.a -lgcc
 
 .PHONY: all clean
+.DEFAULT_GOAL := all
 all: $(BUILD)/iq-source.bin
 
 $(BUILD)/%.o: src/%.c $(wildcard src/*.h) $(wildcard $(PROTOCOL)/*.h) sdkconfig.h | $(BUILD)
@@ -126,7 +140,7 @@ $(BUILD)/transmit_lane%.o: src/transmit.S $(PROTOCOL)/link.h | $(BUILD)
 $(BUILD)/rom-libc.ld: $(ROM_LD)/esp32s3.rom.libc.ld | $(BUILD)
 	sed -E '/^(memcpy|memset|memmove) = /d' $< > $@
 
-$(BUILD)/iq-source.elf: $(OBJECTS) $(BUILD)/rom-libc.ld memory.ld
+$(BUILD)/iq-source.elf: $(OBJECTS) $(BUILD)/rom-libc.ld $(MEMORY_LD)
 	$(CC) -nostdlib -Wl,--gc-sections -Wl,--orphan-handling=warn -Wl,--fatal-warnings \
 		-Wl,-Map,$(BUILD)/iq-source.map $(LINKER_SCRIPTS) $(OBJECTS) \
 		-Wl,--start-group $(LIBRARIES) -Wl,--end-group -o $@
