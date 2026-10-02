@@ -15,6 +15,10 @@
 #include "hal/i2s_ll.h"
 #include "platform.h"
 #include "radio.h"
+#ifdef ESPDR_NARROWBAND
+#include "narrowband.h"
+#include "stream.h"
+#endif
 #include "soc/gpio_reg.h"
 #include "soc/gpio_sig_map.h"
 #include "soc/io_mux_reg.h"
@@ -59,6 +63,7 @@ static void rgb_led_off(void)
 /* Continuous hardware MCLK, independent of both CPU-driven data lanes.
  * The restored crystal feeds the ESP BBPLL; PLL240 / 12 gives 20 MHz on
  * GPIO41 -> Br B12/F4. No DMA, I2S data transfer or per-edge CPU writes. */
+#ifndef ESPDR_NARROWBAND
 static void init_forwarded_clock(void)
 {
     REG(GPIO_ENABLE_W1TC_REG) = 1u << 8; /* release former clock pad */
@@ -76,6 +81,7 @@ static void init_forwarded_clock(void)
     REG(GPIO_ENABLE1_W1TS_REG) = 1u << 9;
     memory_barrier();
 }
+#endif
 
 /* ---- link pins ------------------------------------------------------------------ */
 
@@ -180,6 +186,12 @@ static uint8_t execute(uint8_t op, uint32_t arg, uint32_t *value)
         set_outputs(false);
         return CTL_OK;
     case CTL_STATUS:
+#ifdef ESPDR_NARROWBAND
+        if (arg >= ESP_STAT_COUNT && arg < NB_STAT_COUNT) {
+            *value = stream_stat(arg);
+            return CTL_OK;
+        }
+#endif
         if (arg >= ESP_STAT_COUNT)
             return CTL_BAD_ARGUMENT;
         *value = arg == ESP_STAT_RADIO || arg >= ESP_STAT_LO_HZ ? radio_stat(arg) : capture_stat(arg);
@@ -192,10 +204,32 @@ static uint8_t execute(uint8_t op, uint32_t arg, uint32_t *value)
     case ESP_RUN:
         if (arg > 65535)
             return CTL_BAD_ARGUMENT;
+#ifdef ESPDR_NARROWBAND
+        /* No link lines: the stream goes over USB. It needs the 16 Msps dump. */
+        if (radio_stat(ESP_STAT_RADIO) != ESP_RADIO_OK || !(radio_dump_control() & DUMP_CTRL_16MSPS))
+            return CTL_NOT_READY;
+#else
         if (radio_stat(ESP_STAT_RADIO) != ESP_RADIO_OK || !outputs_enabled)
             return CTL_NOT_READY;
+#endif
         *value = capture_run(arg);
         return *value ? CTL_RUN_FAILED : CTL_OK;
+#ifdef ESPDR_NARROWBAND
+    case NB_SET_DECIM:
+    case NB_SET_FORMAT:
+    case NB_SET_OUTSHIFT:
+        return stream_set(op, arg, value);
+    case NB_BENCH:
+        if (arg > 65535)
+            return CTL_BAD_ARGUMENT;
+        *value = stream_bench(arg);
+        return CTL_OK;
+    case NB_DSPBENCH:
+        if ((arg & 15) != 2 && (arg & 15) != 4)
+            return CTL_BAD_ARGUMENT;
+        *value = stream_dsp_bench(arg);
+        return CTL_OK;
+#endif
     case ESP_STOP: /* the run, if any, has already ended */
     case ESP_ARG_HIGH: /* kept by the command loop */
         return CTL_OK;
@@ -212,7 +246,9 @@ void app_main(void)
     start_core1();
     read_mac(mac);
     radio_init();
+#ifndef ESPDR_NARROWBAND
     init_forwarded_clock();
+#endif
 
     uint8_t request[CTL_REQUEST_BYTES];
     unsigned received = 0;

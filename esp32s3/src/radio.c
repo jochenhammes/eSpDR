@@ -46,7 +46,13 @@ static struct {
     unsigned dc[4];             /* or ESP_DC_AUTO */
     unsigned iq;                /* amplitude | phase << 8, or ESP_AUTO */
 } settings = {
-    .lo_hz = RADIO_LO_HZ, .rate = ESP_RATE_80M, .width = 40, .filter = 0, .gain = RADIO_GAIN,
+    .lo_hz = RADIO_LO_HZ,
+#ifdef ESPDR_NARROWBAND
+    .rate = ESP_RATE_16M, .width = 20, /* the on-chip decimator needs the 16 Msps dump */
+#else
+    .rate = ESP_RATE_80M, .width = 40,
+#endif
+    .filter = 0, .gain = RADIO_GAIN,
     .rf_gain = ESP_AUTO, .bb_gain = ESP_AUTO,
     .dc = {ESP_DC_AUTO, ESP_DC_AUTO, ESP_DC_AUTO, ESP_DC_AUTO}, .iq = ESP_AUTO,
 };

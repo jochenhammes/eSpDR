@@ -7,7 +7,14 @@
 IDF_PATH ?= $(error IDF_PATH is not set; source ESP-IDF v5.5's export.sh)
 CROSS ?= xtensa-esp32s3-elf-
 ESPTOOL ?= esptool.py
+# NARROWBAND=1 builds the FPGA-free receiver: the ESP32-S3 samples at 16 Msps,
+# decimates on chip and streams over USB Serial/JTAG (see ../protocol/narrowband.h).
+NARROWBAND ?= 0
+ifeq ($(NARROWBAND),1)
+BUILD ?= build-nb
+else
 BUILD ?= build
+endif
 
 CC := $(CROSS)gcc
 NM := $(CROSS)nm
@@ -45,11 +52,18 @@ SDK_INCLUDE_DIRS := \
 APP_INCLUDES := -I. -Isrc -I$(PROTOCOL) $(addprefix -I$(IDF)/,$(APP_INCLUDE_DIRS))
 SDK_INCLUDES := -I. $(addprefix -I$(IDF)/,$(SDK_INCLUDE_DIRS))
 
+ifeq ($(NARROWBAND),1)
+NB_FLAGS := -DESPDR_NARROWBAND=1
+ifeq ($(PROFILE),1)
+NB_FLAGS += -DPROFILE=1 # per-section cycle counters in dsp_unit(), read with `espdr_nb.py dspbench --profile`
+endif
+endif
+
 COMMON_FLAGS := -g -mlongcalls -ffunction-sections -fdata-sections
 # Application code. Loop-pattern replacement is disabled so the compiler never
 # inserts memset/memcpy calls into core 1's private code.
 APP_CFLAGS := $(COMMON_FLAGS) -O3 -std=gnu11 -ffreestanding -fno-builtin -mtext-section-literals \
-	-fno-tree-loop-distribute-patterns -Wall -Wextra -Werror $(APP_INCLUDES)
+	-fno-tree-loop-distribute-patterns -Wall -Wextra -Werror $(NB_FLAGS) $(APP_INCLUDES)
 # ESP-IDF sources, compiled as ESP-IDF compiles them for its bootloader.
 SDK_CFLAGS := $(COMMON_FLAGS) -Os -std=gnu17 -freorder-blocks -fstrict-volatile-bitfields \
 	-fno-builtin-memcpy -fno-builtin-memset -fno-builtin-bzero \
@@ -60,6 +74,12 @@ SDK_CFLAGS := $(COMMON_FLAGS) -Os -std=gnu17 -freorder-blocks -fstrict-volatile-
 ASFLAGS := -g -mlongcalls -mtext-section-literals -I$(PROTOCOL) -Isrc
 
 APP_SOURCES := main.c platform.c radio.c capture.c libc.c
+ifeq ($(NARROWBAND),1)
+# The decimator is built twice: core 1 runs its own copy from its own
+# instruction bank, so the cores never contend for instruction fetches.
+APP_SOURCES += dsp.c stream.c
+NB_OBJECTS := $(BUILD)/dsp_core1.o
+endif
 SDK_SOURCES := \
 	$(IDF)/esp_hw_support/port/esp32s3/rtc_clk.c \
 	$(IDF)/esp_hw_support/port/esp32s3/rtc_init.c \
@@ -71,7 +91,8 @@ SDK_SOURCES := \
 OBJECTS := \
 	$(addprefix $(BUILD)/,$(APP_SOURCES:.c=.o)) \
 	$(addprefix $(BUILD)/sdk/,$(notdir $(SDK_SOURCES:.c=.o))) \
-	$(BUILD)/startup.o $(BUILD)/vectors.o $(BUILD)/transmit_lane0.o $(BUILD)/transmit_lane1.o
+	$(BUILD)/startup.o $(BUILD)/vectors.o $(BUILD)/transmit_lane0.o $(BUILD)/transmit_lane1.o \
+	$(NB_OBJECTS)
 
 ROM_LD := $(IDF)/esp_rom/esp32s3/ld
 LINKER_SCRIPTS := -T memory.ld -T $(ROM_LD)/esp32s3.rom.ld -T $(BUILD)/rom-libc.ld \
@@ -84,6 +105,9 @@ all: $(BUILD)/iq-source.bin
 
 $(BUILD)/%.o: src/%.c $(wildcard src/*.h) $(wildcard $(PROTOCOL)/*.h) sdkconfig.h | $(BUILD)
 	$(CC) $(APP_CFLAGS) -c $< -o $@
+
+$(BUILD)/dsp_core1.o: src/dsp.c src/dsp.h src/dsp_taps.h | $(BUILD)
+	$(CC) $(APP_CFLAGS) -DDSP_FUNC=dsp_unit_core1 '-DDSP_ATTR=__attribute__((section(".core1_text")))' -c $< -o $@
 
 $(BUILD)/sdk/%.o: | $(BUILD)/sdk
 	$(CC) $(SDK_CFLAGS) -c $(filter %/$*.c,$(SDK_SOURCES)) -o $@

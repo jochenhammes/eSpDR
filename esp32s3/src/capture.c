@@ -31,6 +31,9 @@
 #include "radio.h"
 #include "soc/systimer_reg.h"
 #include "soc/usb_serial_jtag_reg.h"
+#ifdef ESPDR_NARROWBAND
+#include "stream.h"
+#endif
 
 #define RING_MASK (LINK_RING_PAIRS - 1u)
 #define SENTINEL 0xA5C33C5Au
@@ -60,8 +63,10 @@ typedef struct {
 
 _Static_assert(sizeof(tx_descriptor) == 48, "transmit.S descriptor layout");
 
+#ifndef ESPDR_NARROWBAND
 extern void transmit_lane0(tx_descriptor *tx);
 extern void transmit_lane1(tx_descriptor *tx);
+#endif
 
 typedef struct {
     uint32_t units;
@@ -75,6 +80,10 @@ static struct {
     volatile uint32_t busy[CAPTURE_BANKS], valid[CAPTURE_BANKS], start[CAPTURE_BANKS];
     volatile uint32_t start_probe[CAPTURE_BANKS], end_probe[CAPTURE_BANKS];
     volatile uint32_t epoch[CAPTURE_BANKS];
+#ifdef ESPDR_NARROWBAND
+    /* Narrowband build: pairs and output samples before each bank's unit. */
+    volatile uint32_t pair_start[CAPTURE_BANKS], out_start[CAPTURE_BANKS];
+#endif
     volatile uint32_t status, fail_lane, fail_detail;
     uint32_t t0, t_stop;
     uint64_t duration_ticks;
@@ -162,6 +171,9 @@ ALWAYS_INLINE void fail(unsigned code, unsigned lane, unsigned detail)
     memory_barrier();
     ring.t_stop = tick();
     ring.stopped = 1;
+#ifdef ESPDR_NARROWBAND
+    stream_abort = 1; /* let a lane waiting for its packet turn give up */
+#endif
 }
 
 /* Offset of the first written pair after a start probe; START_GUARD if none. */
@@ -254,6 +266,9 @@ ALWAYS_INLINE void prepare_descriptor(unsigned lane, unsigned b, unsigned first,
 
 ALWAYS_INLINE void lane_loop(const unsigned lane, void (*const transmit)(tx_descriptor *))
 {
+#ifdef ESPDR_NARROWBAND
+    (void)transmit;
+#endif
     lane_stats *stats = &ring.lane[lane];
     uint64_t elapsed = 0;
     uint32_t previous_tick = ring.t0;
@@ -312,6 +327,10 @@ ALWAYS_INLINE void lane_loop(const unsigned lane, void (*const transmit)(tx_desc
                 fail(ESP_FAIL_LATE_POLL, lane, age);
                 break;
             }
+#ifdef ESPDR_NARROWBAND
+            if (lane == 0)
+                stream_pump();
+#endif
         } while (((write_index - ring.start[b]) & RING_MASK) < LINK_THRESHOLD_PAIRS);
         if (ring.stopped)
             break;
@@ -366,14 +385,26 @@ ALWAYS_INLINE void lane_loop(const unsigned lane, void (*const transmit)(tx_desc
             fail(ESP_FAIL_LENGTH, lane, count);
             break;
         }
+#ifdef ESPDR_NARROWBAND
+        uint32_t pair_start = ring.pair_start[b], out_start = ring.out_start[b];
+        if (!last) {
+            ring.pair_start[next] = pair_start + count;
+            ring.out_start[next] = out_start + dsp_outputs(stream_config(), pair_start, count);
+        }
+#endif
         if (!last) {
             ring.start[next] = end;
             memory_barrier();
             ring.valid[next] = 1;
         }
 
+#ifdef ESPDR_NARROWBAND
+        (lane == 0 ? stream_unit : stream_unit_core1)(sequence, bank(b), bank((b + 3) & 3), first, count, pair_start,
+                                                      out_start);
+#else
         prepare_descriptor(lane, b, first, count, sequence);
         transmit(&ring.tx[lane]);
+#endif
         ring.busy[b] = 0;
         memory_barrier();
 
@@ -386,14 +417,22 @@ ALWAYS_INLINE void lane_loop(const unsigned lane, void (*const transmit)(tx_desc
     dedic_gpio_cpu_ll_write_all(0);
 }
 
+#ifdef ESPDR_NARROWBAND
+#define TRANSMIT_LANE0 0
+#define TRANSMIT_LANE1 0
+#else
+#define TRANSMIT_LANE0 transmit_lane0
+#define TRANSMIT_LANE1 transmit_lane1
+#endif
+
 static void __attribute__((noinline, aligned(16))) lane_loop_core0(void)
 {
-    lane_loop(0, transmit_lane0);
+    lane_loop(0, TRANSMIT_LANE0);
 }
 
 static void CORE1_CODE __attribute__((aligned(16))) lane_loop_core1(void)
 {
-    lane_loop(1, transmit_lane1);
+    lane_loop(1, TRANSMIT_LANE1);
 }
 
 /* Core 1 idles here, in its own code bank, and joins each run. */
@@ -436,6 +475,9 @@ unsigned capture_run(unsigned seconds)
     ring.dump_control = radio_dump_control();
     ring.max_bank_age = MAX_BANK_AGE_PAIRS / pairs_per_tick;
     ring.switch_settle = SWITCH_SETTLE_CYCLES_PER_PAIR_TICK / pairs_per_tick;
+#ifdef ESPDR_NARROWBAND
+    stream_begin();
+#endif
 
     copy_words(rom_data, (volatile uint32_t *)ROM_DATA_BASE, ROM_DATA_BYTES / 4);
 
@@ -471,6 +513,9 @@ unsigned capture_run(unsigned seconds)
     memory_barrier();
     copy_words((volatile uint32_t *)ROM_DATA_BASE, rom_data, ROM_DATA_BYTES / 4);
     memory_barrier();
+#ifdef ESPDR_NARROWBAND
+    stream_finish(); /* send what is still queued before the reply */
+#endif
 
     last_run.status = ring.status;
     last_run.detail = ring.fail_detail;

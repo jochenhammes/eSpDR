@@ -4,6 +4,7 @@
 
 # Build outputs at any depth; Vivado also writes state in the working directory.
 build/
+build-nb/
 .Xil/
 *.jou
 *.log
