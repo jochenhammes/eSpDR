@@ -30,7 +30,8 @@
 #define NB_SET_DECIM 29    /* R2: 2 (500 ksps) or 4 (250 ksps) */
 #define NB_SET_FORMAT 30   /* NB_FORMAT_* */
 #define NB_SET_OUTSHIFT 31 /* extra right shift of the output, 0..12 */
-#define NB_BENCH 32        /* USB throughput test: seconds (0: until a byte arrives); reply: bytes sent */
+#define NB_BENCH 32        /* USB throughput test: seconds (0: until a byte arrives) | write mode << 16 (0 the stream's own
+                            * write path, 1 byte-wise with a poll per byte, 2 one check then 64 writes); reply: bytes sent */
 
 /* Decimator tests without a capture. arg = R2 | format << 4 | core-1 copy << 8; reply: CPU cycles for one
  * 16000-pair unit of noise. With NB_DSP_VERIFY the reply is instead the number of bytes in which the SIMD
