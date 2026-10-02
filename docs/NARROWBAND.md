@@ -91,7 +91,7 @@ transmitter. Other boards and hosts are untested; please
    python host/python/espdr_nb.py bench --seconds 3
    ```
 
-   On the test host this gives 0.77 MB/s and `0 bad blocks`. Narrowband mode needs 0.5 MB/s, so anything above that with no bad
+   On the test host this gives 0.87 MB/s and `0 bad blocks`. Narrowband mode needs 0.5 MB/s, so anything above that with no bad
    blocks is fine.
 
 ### Option B: build the firmware yourself
@@ -209,10 +209,10 @@ synthesizer (up to ±190 Hz) digitally.
 
 | | |
 |---|---|
-| USB throughput (bench, one xHCI host) | 0.77 MB/s sustained (12 packets of 64 bytes per ms), 0 bad blocks |
+| USB throughput (bench, one xHCI host) | 0.87 MB/s sustained (13.6 packets of 64 bytes per ms), 0 bad blocks; the chip waits 95 % of the time for the host |
 | Narrowband stream | 0.50 MB/s at cs8 |
-| Signal processing per capture unit | 399 000 of 480 000 CPU cycles (83 %) in the on-chip test; worst unit in live runs 92 % |
-| 60 s run, 250 ksps | 15 000 206 samples, none lost |
+| Signal processing per capture unit | 288 000 of 480 000 CPU cycles (60 %) in the on-chip test; worst unit in live runs 62 % |
+| 120 s runs, 250 ksps | 30 000 3xx samples (the end of a unit), none lost; one unit join a few pairs off per run is counted and accepted |
 | 2 min through the bridge at 2.4 MS/s | no dropped blocks |
 | Retune | about 50 ms |
 | Filter (host test, bit-exact against an integer model) | passband flat to 0.04 dB; aliases at least 71 dB down |

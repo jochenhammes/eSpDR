@@ -6,6 +6,7 @@
 #include "dsp.h"
 
 extern volatile uint32_t stream_abort; /* set when a run has failed: lanes stop waiting */
+extern volatile uint32_t stream_slips; /* unit joins that were a few pairs off and were accepted */
 
 /* Resets the stream state for a run: FIFO, counters, first sequence number. */
 void stream_begin(void);

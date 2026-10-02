@@ -45,6 +45,7 @@
 /* Numbered after ESP_STAT_COUNT (protocol/control.h); upstream keeps adding to that list. */
 #define NB_STAT_DROPPED 32   /* units dropped (FIFO full) in the last run */
 #define NB_STAT_FIFO_PEAK 33 /* peak FIFO fill in bytes */
-#define NB_STAT_COUNT 34
+#define NB_STAT_SLIPS 34     /* unit joins accepted although the next bank started a few pairs early */
+#define NB_STAT_COUNT 35
 
 #endif

@@ -47,7 +47,7 @@ sha256sum -c SHA256SUMS --ignore-missing
 sudo usermod -aG dialout "$USER"        # once; log out and in afterwards
 sudo cp host/udev/70-espdr.rules /etc/udev/rules.d/ && sudo udevadm control --reload && sudo udevadm trigger   # once
 python host/python/espdr_load.py iq-source-nb.bin       # loads it into the board's RAM; nothing is written to flash
-python host/python/espdr_nb.py bench --seconds 3        # about 0.77 MB/s and 0 bad blocks means the link is fine
+python host/python/espdr_nb.py bench --seconds 3        # about 0.87 MB/s and 0 bad blocks means the link is fine
 python host/python/espdr_rtltcp.py                      # leave it running
 ```
 
