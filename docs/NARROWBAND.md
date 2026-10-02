@@ -96,10 +96,12 @@ transmitter. Other boards and hosts are untested; please
 
 ### Option B: build the firmware yourself
 
-You need ESP-IDF v5.5 for its headers, ROM linker scripts and Xtensa toolchain, about 1 GB:
+You need ESP-IDF **v5.5.3 or newer** in the 5.5 series for its headers, ROM linker scripts and Xtensa toolchain, about 1 GB
+(v5.5.0 to v5.5.2 lack a clock-gating function the radio code calls, and fail with *implicit declaration of function
+`periph_ll_phy_calibration_module_enable_clk_clear_rst`*):
 
 ```sh
-git clone --depth 1 -b release/v5.5 https://github.com/espressif/esp-idf.git ~/esp-idf
+git clone --depth 1 -b v5.5.5 https://github.com/espressif/esp-idf.git ~/esp-idf
 cd ~/esp-idf && git submodule update --init --depth 1 components/esp_phy/lib
 ./install.sh esp32s3 && . ./export.sh
 cd /path/to/eSpDR

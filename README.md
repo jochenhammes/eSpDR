@@ -231,7 +231,7 @@ Each part builds on its own:
 | ESP32-S3 firmware | ESP-IDF v5.5 (`. $IDF_PATH/export.sh`) | `make -C esp32s3` | `esp32s3/build/iq-source.bin` |
 | FPGA image | Vivado 2025.2 (`vivado` on `PATH`, or `VIVADO=...`) | `fpga/build.sh` (about 30 min) | `fpga/build/iqstream.bit` |
 | Host tool | C++17, zlib, FFTW3 single precision (`libfftw3-dev`), [FTDI D3XX](https://ftdichip.com/drivers/d3xx-drivers/) for Linux | `make -C host D3XX_DIR=/path/to/d3xx` | `host/build/iqstream` |
-| ESP32-S3 narrowband firmware (no FPGA) | ESP-IDF v5.5 | `make -C esp32s3 NARROWBAND=1` | `esp32s3/build-nb/iq-source.bin` |
+| ESP32-S3 narrowband firmware (no FPGA) | ESP-IDF v5.5.3 or newer (needed by the radio code of both firmware variants) | `make -C esp32s3 NARROWBAND=1` | `esp32s3/build-nb/iq-source.bin` |
 | Tests | C++17, zlib, FFTW3, Verilator 5 | `tests/run.sh` (`--long` adds a full-size run) | pass/fail |
 
 From the repository root, add the built host tool to your shell's `PATH` for
