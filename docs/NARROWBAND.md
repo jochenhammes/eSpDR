@@ -15,7 +15,7 @@ ESP32-S3 ADC  --16 Msps-->  CIC /16  -->  FIR /4  -->  250 ksps int8 I/Q  --USB-
 *SDR++ receiving a PlutoSDR transmission at 2.4307 GHz through the ESP32-S3 and the `rtl_tcp` bridge. The test transmitter draws
 text into the waterfall.*
 
-This is the same ESP32-S3 firmware base as the 80 Msps FPGA design in the main [README](../README.md); the FPGA is only
+This is the same ESP32-S3 firmware base as the 80 Msps FPGA design in the original [README](../README-eSpDR.md); the FPGA is only
 needed for the full 80 MHz span. For a few hundred kHz it is not: 250 ksps of 8-bit samples is 0.5 MB/s, which USB
 Full-Speed carries.
 

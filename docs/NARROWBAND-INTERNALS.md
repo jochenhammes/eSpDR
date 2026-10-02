@@ -1,7 +1,7 @@
 # Narrowband mode: how it works inside
 
 For users, see [NARROWBAND.md](NARROWBAND.md). This page is for people who want to change the firmware or understand
-the numbers. The radio side (16 Msps dump, banks, link timing) is described in [RADIO.md](RADIO.md) and the main README;
+the numbers. The radio side (16 Msps dump, banks, link timing) is described in [RADIO.md](RADIO.md) and the [original README](../README-eSpDR.md);
 here only what the narrowband mode adds.
 
 ## The time budget
