@@ -12,12 +12,12 @@ Every ESP32-S3 has a 2.4 GHz Wi-Fi receiver, and somewhere inside it is an I/Q s
 [eSpDR](https://github.com/h0m3us3r/eSpDR) by h0m3us3r found how to read it, at up to 80 Msps, with an FPGA to carry the data out.
 This fork adds a mode that **does not need the FPGA**: the chip decimates the stream itself and sends 250 ksps over its USB port, which is
 all a normal SDR session needs. A small bridge makes the board look like an `rtl_tcp` server, so **SDR++** and other programs can use it as a
-receiver for 2.2 to 2.8 GHz: the 13 cm amateur band, QO-100 uplink, ISM, Wi-Fi channels.
+receiver for 1.84 to 2.79 GHz: the 13 cm amateur band, QO-100 uplink, ISM, Wi-Fi channels (best sensitivity around 2.4 GHz).
 
 | | |
 |---|---|
 | What you need | one ESP32-S3 board with two USB ports, a USB cable (two to load), a PC with Python |
-| Frequency range | 2.21 to 2.79 GHz |
+| Frequency range | 1.84 to 2.79 GHz (best sensitivity around 2.4 GHz) |
 | Bandwidth | 250 ksps complex, about ±100 kHz usable |
 | Format | int8 I/Q, 0.5 MB/s over USB |
 | Works with | SDR++, anything that speaks `rtl_tcp`, GNU Radio (TCP), plain files |
@@ -51,7 +51,7 @@ python host/python/espdr_nb.py bench --seconds 3        # about 0.77 MB/s and 0 
 python host/python/espdr_rtltcp.py                      # leave it running
 ```
 
-In SDR++ choose the source **RTL-TCP**, host `127.0.0.1`, port `1234`, press play, and tune somewhere between 2210 and 2790 MHz.
+In SDR++ choose the source **RTL-TCP**, host `127.0.0.1`, port `1234`, press play, and tune somewhere between 1842 and 2790 MHz.
 The firmware lives in the board's RAM, so load it again after every power cycle.
 
 To record instead: `python host/python/espdr_nb.py run --freq 2412e6 --seconds 5 -o test.cs8`.

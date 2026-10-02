@@ -35,7 +35,7 @@ ESP32-S3 ADC ──16 GPIO lines──▶ Alchitry Au FPGA ──FT600 USB 3─�
 
 | | Full design (this README) | [Narrowband mode](docs/NARROWBAND.md) |
 |---|---|---|
-| Span | 80 MHz (2400 to 2480 MHz) | about 200 kHz anywhere in 2.21 to 2.79 GHz |
+| Span | 80 MHz (2400 to 2480 MHz) | about 200 kHz anywhere in 1.84 to 2.79 GHz |
 | Hardware | ESP32-S3 board + Alchitry Au FPGA + Ft + Br + wiring | one ESP32-S3 board and a USB cable |
 | Data rate | 95 to 100 MB/s over USB 3 | 0.5 MB/s over USB Full-Speed |
 | Host software | `iqstream` (C++) with a live web spectrum | Python tools, an `rtl_tcp` bridge for SDR++ and others |
