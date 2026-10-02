@@ -27,7 +27,7 @@
 #define NB_FORMAT_CS16 0
 #define NB_FORMAT_CS8 1
 
-#define NB_SET_DECIM 29    /* R2: 2 (500 ksps) or 4 (250 ksps) */
+#define NB_SET_DECIM 29    /* R2: 2 (500 ksps), 3 (333 ksps) or 4 (250 ksps) */
 #define NB_SET_FORMAT 30   /* NB_FORMAT_* */
 #define NB_SET_OUTSHIFT 31 /* extra right shift of the output, 0..12 */
 #define NB_BENCH 32        /* USB throughput test: seconds (0: until a byte arrives) | write mode << 16 (0 the stream's own

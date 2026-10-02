@@ -7,10 +7,12 @@ espdr_nb.py: one client at a time, the radio runs only while a client is connect
 
   espdr_rtltcp.py -p auto                       # listen on 127.0.0.1:1234
   espdr_rtltcp.py -p /dev/ttyACM1 --ppm -5.7 --listen 0.0.0.0:1234
+  espdr_rtltcp.py --decim 3                     # 333 ksps from the radio (+-133 kHz) instead of 250 ksps (+-100 kHz)
   espdr_rtltcp.py selftest                      # no hardware needed
 
-The radio delivers 250 ksps (+-100 kHz usable). The sample rate a client asks for is produced by filtered
-interpolation, so any rate from 960 kS/s to 3.2 MS/s works; asking for exactly 250000 passes the data through.
+The radio delivers 250 ksps (+-100 kHz usable) or, with --decim 3, 333.3 ksps (+-133 kHz). The sample rate a client asks
+for is produced by filtered interpolation, so any rate from 1 MS/s to 3.2 MS/s works; asking for exactly the radio's rate
+passes the data through.
 Frequency and gain changes restart the ESP's run (the radio is reconfigured between runs), which leaves a short gap.
 
 Needs numpy and pyserial.
@@ -28,7 +30,7 @@ import numpy as np
 import espdr_nb as nb
 
 HEADER = b"RTL0" + struct.pack(">II", 5, 29)  # "R820T" tuner with 29 gain steps: what clients expect to see
-SRC_RATE = 250_000.0                          # ESP output at --decim 4
+SRC_RATES = {3: 1e6 / 3, 4: 250_000.0}        # ESP output per --decim
 LO_MIN, LO_MAX = 1_841_666_667, 2_790_000_000  # ESP tuning range, Hz (ESP_LO_MIN_HZ / ESP_LO_MAX_HZ in protocol/control.h)
 # R820T gain table in tenths of a dB, for rtl_tcp's "set gain by index"
 GAINS_TENTHS = (0, 9, 14, 27, 37, 77, 87, 125, 144, 157, 166, 197, 207, 229, 254, 280, 297, 328, 338, 364, 372,
@@ -36,7 +38,7 @@ GAINS_TENTHS = (0, 9, 14, 27, 37, 77, 87, 125, 144, 157, 166, 197, 207, 229, 254
 CMD_FREQ, CMD_RATE, CMD_GAIN_MODE, CMD_GAIN, CMD_PPM, CMD_AGC, CMD_GAIN_INDEX = 0x01, 0x02, 0x03, 0x04, 0x05, 0x08, 0x0D
 DEBOUNCE_S = 0.05      # SDR++ sends many frequency commands while dragging: restart the radio once they stop
 SETTLE_S = 0.15        # after a connect, wait for the client's initial commands
-FLUSH_SAMPLES = 2500   # process in 10 ms blocks of the 250 ksps stream
+FLUSH_SECONDS = 0.01   # process the stream in 10 ms blocks
 DC_TAU_S = 0.5
 
 
@@ -46,7 +48,8 @@ def log(*a):
 
 # --- signal path ---------------------------------------------------------------------------------------
 def _design_up4():
-    """100-tap windowed-sinc low-pass for 250 k -> 1 MS/s (passband 100 kHz, images from 150 kHz down >70 dB)."""
+    """100-tap windowed-sinc low-pass for x4 interpolation, cut at the input's Nyquist frequency (250 k -> 1 MS/s: passband
+    100 kHz, images from 150 kHz down >70 dB; 333 k -> 1.33 MS/s: the same, scaled)."""
     n = 100
     t = np.arange(n) - (n - 1) / 2
     h = np.sinc(2 * 0.125 * t) * np.kaiser(n, 8.0)
@@ -104,26 +107,27 @@ class Fractional:
 class Chain:
     """ESP samples (complex, LO-minus-RF) -> unsigned 8-bit rtl_tcp stream at `dst_rate`."""
 
-    def __init__(self, dst_rate, shift_hz=0.0, dc_block=True):
-        self.shift_w = 2 * np.pi * shift_hz / SRC_RATE
+    def __init__(self, dst_rate, shift_hz=0.0, dc_block=True, src_rate=250_000.0):
+        self.src_rate = src_rate
+        self.shift_w = 2 * np.pi * shift_hz / src_rate
         self.phase = 0.0
         self.dc_block = dc_block
         self.dc = None
         self.stages = []
-        if abs(dst_rate - SRC_RATE) < 1:
+        if abs(dst_rate - src_rate) < 1:
             pass
-        elif dst_rate <= 300_000:
-            self.stages = [Fractional(SRC_RATE / dst_rate)]
+        elif dst_rate <= 1.2 * src_rate:
+            self.stages = [Fractional(src_rate / dst_rate)]
         else:
             self.stages = [Up4()]
-            if abs(dst_rate - 4 * SRC_RATE) > 1:
-                self.stages.append(Fractional(4 * SRC_RATE / dst_rate))
+            if abs(dst_rate - 4 * src_rate) > 1:
+                self.stages.append(Fractional(4 * src_rate / dst_rate))
 
     def process(self, z):
         z = np.conj(z)  # the radio delivers LO minus RF; clients expect a higher RF to be a higher frequency
         if self.dc_block:
             m = z.mean()
-            a = min(1.0, len(z) / (DC_TAU_S * SRC_RATE))
+            a = min(1.0, len(z) / (DC_TAU_S * self.src_rate))
             self.dc = m if self.dc is None else self.dc + a * (m - self.dc)
             z = z - self.dc
         if abs(self.shift_w) > 1e-9:
@@ -224,8 +228,9 @@ class Session:
 
 # --- bridge -----------------------------------------------------------------------------------------------
 class Bridge:
-    def __init__(self, open_link, listen, ppm=0.0, gain=60, gain_range=(30, 80), dc_block=True):
+    def __init__(self, open_link, listen, ppm=0.0, gain=60, gain_range=(30, 80), dc_block=True, decim=4):
         self.open_link = open_link
+        self.decim, self.src_rate = decim, SRC_RATES[decim]
         self.base_ppm = ppm  # --ppm: this unit's crystal; a client's ppm command adds to it
         self.params = Params(2_400_000_000, ppm, gain, 2_400_000)
         self.gain_range = gain_range
@@ -317,7 +322,7 @@ class Bridge:
             hw_freq = int(round(freq / (1 + ppm * 1e-6)))
             t0 = time.monotonic()
             try:
-                lo = nb.configure_receiver(link, hw_freq, 4, nb.FORMATS["cs8"], 4, gain)
+                lo = nb.configure_receiver(link, hw_freq, self.decim, nb.FORMATS["cs8"], 4, gain)
             except nb.CommandError as e:
                 if e.op != nb.ESP_SET_LO:
                     raise
@@ -360,14 +365,14 @@ class Sink:
         if rate != self.rate:
             self.rate = rate
             old = self.chain
-            self.chain = Chain(rate, self.shift_hz, self.bridge.dc_block)
+            self.chain = Chain(rate, self.shift_hz, self.bridge.dc_block, self.bridge.src_rate)
             if old is not None:
                 self.chain.dc = old.dc
         return self.chain
 
     def __call__(self, header, payload):
         if self.expected is not None and header["first"] != self.expected:
-            lost = min((header["first"] - self.expected) & 0xFFFFFFFF, int(SRC_RATE))
+            lost = min((header["first"] - self.expected) & 0xFFFFFFFF, int(self.bridge.src_rate))
             self.parts.append(np.zeros(lost, np.complex64))  # keep the time base: a gap becomes silence
             self.n += lost
         self.expected = (header["first"] + header["count"]) & 0xFFFFFFFF
@@ -377,7 +382,7 @@ class Sink:
             a = np.frombuffer(payload, dtype="<i2").astype(np.float32) / 256.0
         self.parts.append(a[0::2] + 1j * a[1::2])
         self.n += header["count"]
-        if self.n >= FLUSH_SAMPLES:
+        if self.n >= self.bridge.src_rate * FLUSH_SECONDS:
             self.flush()
 
     def flush(self):
@@ -406,7 +411,7 @@ def serve_main(args):
         return link
 
     bridge = Bridge(open_link, parse_listen(args.listen), ppm=args.ppm, gain=args.gain,
-                    gain_range=(args.gain_min, args.gain_max), dc_block=not args.no_dc_block)
+                    gain_range=(args.gain_min, args.gain_max), dc_block=not args.no_dc_block, decim=args.decim)
     log(f"rtl_tcp server on {bridge.address[0]}:{bridge.address[1]}; ESP at {args.port}; ppm {args.ppm}")
     try:
         bridge.run()
@@ -419,7 +424,7 @@ def serve_main(args):
 # --- selftest (simulated ESP, no hardware) -----------------------------------------------------------------
 class SimEsp:
     """Plays the ESP for the bridge: a transmitter at `rf_hz`, seen through the LO it is set to, in the radio's
-    LO-minus-RF convention, with a DC offset and noise; paced `speed` times the real 250 ksps."""
+    LO-minus-RF convention, with a DC offset and noise; paced `speed` times the real rate (250 ksps, or what NB_SET_DECIM selects)."""
     LO_STEP = 381.4697265625
 
     def __init__(self, rf_hz, speed=1.0):
@@ -434,6 +439,7 @@ class SimEsp:
         self.seq = 0
         self.arg_high = 0
         self.rng = np.random.default_rng(1)
+        self.r2 = 4
 
     @property
     def in_waiting(self):
@@ -461,6 +467,9 @@ class SimEsp:
         elif op == nb.ESP_SET_LO:
             self.lo = round(full / self.LO_STEP) * self.LO_STEP
             self.out += self._resp(op, 0, int(round(self.lo)))
+        elif op == nb.NB_SET_DECIM:
+            self.r2 = full
+            self.out += self._resp(op, 0, full)
         elif op == nb.ESP_RUN:
             self.running, self.stopping, self.t_last = True, False, time.monotonic()
         elif op == nb.ESP_STOP:
@@ -480,17 +489,18 @@ class SimEsp:
     def _pump(self):
         if self.running:
             now = time.monotonic()
-            count = int((now - self.t_last) * 250_000 * self.speed)
+            rate = 1e6 / self.r2
+            count = int((now - self.t_last) * rate * self.speed)
             if count >= 240:
                 count = min(count, 480)
                 self.t_last = now
                 k = np.arange(self.sample, self.sample + count)
                 f_base = -(self.rf_hz - self.lo)            # LO minus RF
-                z = 40 * np.exp(2j * np.pi * f_base / 250_000 * k) + (-6 + 4j)
+                z = 40 * np.exp(2j * np.pi * f_base / rate * k) + (-6 + 4j)
                 z += self.rng.normal(0, 2, count) + 1j * self.rng.normal(0, 2, count)
                 iq = np.empty(2 * count, np.int8)
                 iq[0::2], iq[1::2] = np.clip(np.round(z.real), -128, 127), np.clip(np.round(z.imag), -128, 127)
-                words = [0xE5 | 0x5D << 8, 1 | 4 << 8, count, 0, self.seq & 0xFFFF, self.seq >> 16,
+                words = [0xE5 | 0x5D << 8, 1 | self.r2 << 8, count, 0, self.seq & 0xFFFF, self.seq >> 16,
                          self.sample & 0xFFFF, self.sample >> 16, 4, 0]
                 words[9] = 0xFFFF - (sum(words[:9]) & 0xFFFF)
                 self.out += struct.pack("<10H", *words) + iq.tobytes()
@@ -538,7 +548,15 @@ def _drain(sock, seconds):
 
 
 def selftest():
+    ok = _selftest(4) & _selftest(3)
+    print("SELFTEST", "PASSED" if ok else "FAILED")
+    return 0 if ok else 1
+
+
+def _selftest(decim):
     ok = True
+    src = int(round(SRC_RATES[decim]))
+    print(f"--- radio at {src / 1e3:.0f} ksps (--decim {decim})")
 
     def check(name, good, detail=""):
         nonlocal ok
@@ -546,7 +564,7 @@ def selftest():
         print(f"{name}: {'OK' if good else 'FAIL'} {detail}")
 
     sim = SimEsp(rf_hz=2_400_050_000)
-    bridge = Bridge(lambda: nb.Link(sim), ("127.0.0.1", 0), ppm=0.0)
+    bridge = Bridge(lambda: nb.Link(sim), ("127.0.0.1", 0), ppm=0.0, decim=decim)
     threading.Thread(target=bridge.run, daemon=True).start()
 
     def connect():
@@ -561,7 +579,7 @@ def selftest():
 
     s, hdr = connect()
     check("header", hdr == b"RTL0" + struct.pack(">II", 5, 29), repr(hdr))
-    for rate in (250_000, 1_024_000, 2_400_000):
+    for rate in (src, 1_024_000, 2_400_000):
         cmd(s, CMD_RATE, rate)
         cmd(s, CMD_FREQ, 2_400_000_000)
         _drain(s, 0.6)                         # let the new rate take effect, drop the old one
@@ -589,20 +607,20 @@ def selftest():
     check("frequency below the range is clamped", LO_MIN in lo_cmds and LO_MIN == 1_841_666_667, f"LO commands {lo_cmds[-3:]}")
     # the simulated ESP refuses that (no PLL lock, as on the test board): the bridge goes back to the last good frequency
     # and keeps streaming
-    f, level, _ = _tone(_collect(s, 0.4, 250_000), 250_000)
+    f, level, _ = _tone(_collect(s, 0.4, src), src)
     check("refused frequency falls back and keeps streaming", lo_cmds[-1] == 2_400_020_000 and level > 25,
           f"last LO command {lo_cmds[-1]}, {level:.0f} dB")
     cmd(s, CMD_FREQ, 2_400_000_000)
     s.close()
     time.sleep(0.5)
     s, hdr = connect()
-    cmd(s, CMD_RATE, 250_000)
-    f, level, _ = _tone(_collect(s, 0.4, 250_000), 250_000)
+    cmd(s, CMD_RATE, src)
+    f, level, _ = _tone(_collect(s, 0.4, src), src)
     check("reconnect", hdr[:4] == b"RTL0" and level > 25, f"{f:+.0f} Hz")
     s.close()
     bridge.quit = True
-    print("SELFTEST", "PASSED" if ok else "FAILED")
-    return 0 if ok else 1
+    time.sleep(0.3)
+    return ok
 
 
 def main():
@@ -614,6 +632,8 @@ def main():
     ap.add_argument("--gain", type=int, default=60, help="gain selector 0..127 until the client sets one")
     ap.add_argument("--gain-min", type=int, default=30, help="selector for a client gain of 0 dB")
     ap.add_argument("--gain-max", type=int, default=80, help="selector for a client gain of 49.6 dB")
+    ap.add_argument("--decim", type=int, choices=sorted(SRC_RATES), default=4,
+                    help="4: 250 ksps from the radio, +-100 kHz usable (default); 3: 333 ksps, +-133 kHz usable")
     ap.add_argument("--no-dc-block", action="store_true", help="keep the radio's DC offset")
     sub = ap.add_subparsers(dest="cmd")
     sub.add_parser("selftest", help="check the server against a simulated ESP")

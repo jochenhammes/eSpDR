@@ -407,7 +407,7 @@ ALWAYS_INLINE void lane_loop(const unsigned lane, void (*const transmit)(tx_desc
 #ifdef ESPDR_NARROWBAND
         uint32_t pair_start = ring.pair_start[b], out_start = ring.out_start[b];
         if (!last) {
-            ring.pair_start[next] = pair_start + count;
+            ring.pair_start[next] = dsp_advance(pair_start, count);
             ring.out_start[next] = out_start + dsp_outputs(stream_config(), pair_start, count);
         }
 #endif

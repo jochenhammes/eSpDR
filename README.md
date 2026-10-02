@@ -10,7 +10,7 @@ into the waterfall.*
 
 Every ESP32-S3 has a 2.4 GHz Wi-Fi receiver, and somewhere inside it is an I/Q stream that Espressif does not document.
 [eSpDR](https://github.com/h0m3us3r/eSpDR) by h0m3us3r found how to read it, at up to 80 Msps, with an FPGA to carry the data out.
-This fork adds a mode that **does not need the FPGA**: the chip decimates the stream itself and sends 250 ksps over its USB port, which is
+This fork adds a mode that **does not need the FPGA**: the chip decimates the stream itself and sends 250 or 333 ksps over its USB port, which is
 all a normal SDR session needs. A small bridge makes the board look like an `rtl_tcp` server, so **SDR++** and other programs can use it as a
 receiver for 1.84 to 2.79 GHz: the 13 cm amateur band, QO-100 uplink, ISM, Wi-Fi channels (best sensitivity around 2.4 GHz).
 
@@ -18,14 +18,14 @@ receiver for 1.84 to 2.79 GHz: the 13 cm amateur band, QO-100 uplink, ISM, Wi-Fi
 |---|---|
 | What you need | one ESP32-S3 board with two USB ports, a USB cable (two to load), a PC with Python |
 | Frequency range | 1.84 to 2.79 GHz (best sensitivity around 2.4 GHz) |
-| Bandwidth | 250 ksps complex, about ±100 kHz usable |
-| Format | int8 I/Q, 0.5 MB/s over USB |
+| Bandwidth | 250 ksps complex, about ±100 kHz usable; 333 ksps, about ±133 kHz, with `--decim 3` |
+| Format | int8 I/Q, 0.5 MB/s (333 ksps: 0.67 MB/s) over USB |
 | Works with | SDR++, anything that speaks `rtl_tcp`, GNU Radio (TCP), plain files |
 | Direction | receive only |
 | Status | works on the one board tested; reports from other boards wanted |
 
 ```
-ESP32-S3 ADC  --16 Msps-->  CIC /16  -->  FIR /4  -->  250 ksps int8 I/Q  --USB-->  rtl_tcp bridge  -->  SDR++
+ESP32-S3 ADC  --16 Msps-->  CIC /16  -->  FIR /4 or /3  -->  250 or 333 ksps int8 I/Q  --USB-->  rtl_tcp bridge  -->  SDR++
               (both cores alternate between capture units; the FIR runs on the S3's SIMD unit)
 ```
 
@@ -60,8 +60,7 @@ For GNU Radio, pluto-advanced-rx, the crystal correction (`--ppm`), gain and bui
 ## Good to know
 
 * **A strong line at exactly 2400.000 and 2440.000 MHz** is the board's own 40 MHz crystal (its 60th and 61st harmonic), not a signal.
-* **Fixed 250 ksps.** A 500 ksps mode exists in the firmware but needs more CPU time and USB bandwidth than the chip and USB Full-Speed
-  provide, so it is not supported.
+* **No 500 ksps.** The firmware has a 500 ksps mode, but it needs 1.0 MB/s and the USB Serial/JTAG port gives 0.87 MB/s.
 * **No calibrated levels, no AGC.** The gain is a table index; the crystal is within ±10 ppm, which is ±24 kHz at 2.4 GHz, so calibrate
   it against a known carrier.
 * **One board tested** (a generic ESP32-S3-WROOM-1 dev board with two USB-C ports, on Ubuntu). Please tell us what you try:

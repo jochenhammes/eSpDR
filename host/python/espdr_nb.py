@@ -396,7 +396,7 @@ def cmd_dspbench(args):
     check_firmware(link)
     print(f"budget per unit and lane: {SERVICE_BUDGET_CYCLES} cycles")
     bad = 0
-    for r2 in (4, 2):
+    for r2 in (4, 3, 2):
         for fmt, name in ((1, "cs8"), (0, "cs16")):
             for core1 in (0, 1):
                 what = r2 | fmt << 4 | core1 << 8
@@ -506,9 +506,9 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run", help="tune, run and stream")
     r.add_argument("--freq", type=float, required=True, help="LO frequency in Hz (e.g. 2400.1e6)")
-    r.add_argument("--decim", type=int, choices=(2, 4), default=4,
-                   help="4: 250 ksps (+-100 kHz usable, the supported mode); 2: 500 ksps, experimental - it needs "
-                        "more CPU time and USB bandwidth than the current firmware and USB link provide")
+    r.add_argument("--decim", type=int, choices=(2, 3, 4), default=4,
+                   help="4: 250 ksps (+-100 kHz usable, default); 3: 333 ksps (+-133 kHz); 2: 500 ksps, which needs 1.0 MB/s - "
+                        "more than this USB link delivers, so samples are lost")
     r.add_argument("--format", choices=sorted(FORMATS), default="cs8")
     r.add_argument("--shift", type=int, help="output right shift (default 4 for cs8, 0 for cs16)")
     r.add_argument("--gain", type=int, default=60,

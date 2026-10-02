@@ -65,7 +65,7 @@ unsigned stream_set(unsigned op, uint32_t value, uint32_t *effective)
 {
     switch (op) {
     case NB_SET_DECIM:
-        if (value != 2 && value != 4)
+        if (value < 2 || value > 4)
             return CTL_BAD_ARGUMENT;
         stream_cfg.r2 = value;
         *effective = stream_cfg.r2;

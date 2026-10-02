@@ -18,9 +18,10 @@ the run stops with failure code 7 or 8 (`bank still busy` / `next bank prepared 
   61 coefficients (largest 2736, sum 65536), padded to 64. Block *j* needs the 64 samples of blocks *j-3..j*, so a unit starts three blocks
   early with empty rings. For 10-bit input nothing wraps (|output| ≤ 2^25), so this is bit-for-bit what integrators and combs in 32-bit
   arithmetic give. The output is shifted right by 11 to 16 bits.
-* **Stage 2**: a 73-tap symmetric FIR (Q15) at 1 Msps, decimating by `R2 = 4` (250 ksps). `tools/design_taps.py` designs it
-  with a least-squares fit that also equalises the CIC passband droop, so the output is flat to the edge of its
-  ±100 kHz passband.
+* **Stage 2**: a symmetric FIR (Q15) at 1 Msps, decimating by `R2` = 4 (250 ksps, 73 taps, ±100 kHz), 3 (333 ksps, 61 taps, ±133 kHz) or
+  2 (500 ksps, 41 taps, ±200 kHz, not usable: see the limits in the guide). `tools/design_taps.py` designs them with a least-squares fit that
+  also equalises the CIC passband droop, so the output is flat to the edge of the passband (R2 = 3: ±0.01 dB, stopband from 200 kHz
+  at least 68 dB down, CIC images at least 65 dB down).
 * **Units are independent.** Output sample *k* depends only on input pairs, never on earlier output, so each unit is decimated
   without state from the previous one: the CIC integrators start from zero `NCIC` blocks before the first block the FIR needs,
   which reproduces the true response exactly from there on, and the filter history (`taps - 1 + NCIC` blocks, about
@@ -55,12 +56,13 @@ hardware is not slow: a micro-test measured one cycle per instruction and per lo
 data memories.
 
 **The SIMD FIR.** `ee.vmulas.s16.accx` multiplies 8 signed 16-bit pairs and adds the sum into a 40-bit accumulator, so a 73-tap FIR
-is ten vector steps per channel instead of 146 multiply-adds. The vector loads must be 16-byte aligned, but the history window
+is ten vector steps per channel instead of 146 multiply-adds (eight for R2 = 3). The vector loads must be 16-byte aligned, but the history window
 starts at an arbitrary sample. `design_taps.py` therefore also emits the taps eight times, shifted by 0 to 7 samples and zero
 padded; the code picks the row that matches the window's offset and reads whole aligned vectors, the zeros cancelling the extra
 samples at both ends. The result is bit-identical to the C version, which stays as the host reference: the chip checks it itself
-(`dspbench` runs both paths on the same noise and reports the number of differing bytes, 0 for R2 2 and 4, cs8 and cs16, both
-core copies).
+(`dspbench` runs both paths on the same noise and reports the number of differing bytes, 0 for R2 2, 3 and 4, cs8 and cs16, both
+core copies). Measured per unit: 285 000 cycles (59 %) at R2 = 4, 295 000 (61 %) at R2 = 3, 311 000 (65 %) at R2 = 2; in live runs the worst
+unit takes 62 %, 65 % and 69 %.
 
 ## Booting from flash
 
@@ -126,9 +128,44 @@ if upstream adds statistics.
 
 | Test | What it proves | Hardware |
 |---|---|---|
-| `python esp32s3/tools/dsp_selftest.py` | `dsp.c` is bit-exact against an independent integer model for R2 2 and 4, cs8/cs16, random unit lengths; passband flat, aliases at the predicted level | no |
+| `python esp32s3/tools/dsp_selftest.py` | `dsp.c` is bit-exact against an independent integer model for R2 2, 3 and 4, cs8/cs16, random unit lengths; random start phases of the block counter and the wrap of the pair index; passband flat, aliases at the predicted level | no |
 | `python host/python/espdr_nb.py selftest` | packet parser against a simulated ESP: clean, with gaps, with stray bytes; bench | no |
-| `python host/python/espdr_rtltcp.py selftest` | rtl_tcp server against a simulated ESP: header, tones at 0.25, 1.024, 2.4 MS/s, DC removal, retune, reconnect | no |
+| `python host/python/espdr_rtltcp.py selftest` | rtl_tcp server against a simulated ESP: header, tones at the radio's rate (250 and 333 ksps), 1.024 and 2.4 MS/s, DC removal, retune, reconnect | no |
+| `python host/python/espdr_nb.py dspbench` | cycles per unit on the chip, SIMD (FIR and CIC) vs C | yes |
+| `make -C esp32s3 NARROWBAND=1 PROFILE=1` + `dspbench --profile` | cycles per section (stage 1, comb and history, FIR) | yes |
+
+Continuous integration runs the first three and builds both firmware images, and checks that the FPGA firmware is unchanged.
+
+## The sideband
+
+`I + jQ` is *LO minus RF* straight from the radio (see RADIO.md). The raw stream keeps that; `espdr_rtltcp.py` and `--convert cf32`
+conjugate it. Verified by moving a carrier 20 kHz up and seeing the raw tone move 20 kHz down.
+
+## Ratios that are not a power of two
+
+R2 = 3 (333.3 ksps) needs three things a power of two does not:
+
+* **Which blocks trigger stage 2.** The block counter `ja` (pair index / 16) must satisfy `ja mod 3 = 0` at a trigger. `dsp_geom()` gets
+  `ja mod 3` without a division from the base-4 digit sum (`dsp_mod3()`, since 4 = 1 mod 3), and the block loop keeps a running `trigger`
+  block number instead of masking. The number of outputs of a unit is `ceil(n / 3)` as `(n * 0xAAAB) >> 17`, valid for n < 2^16.
+* **A wrap of the pair index that keeps the phase.** The index since the start of a run used to wrap at 2^32 (after 268 s), which is a
+  multiple of every power of two but not of 3: the trigger phase would have jumped by one block. `dsp_advance()` wraps it at
+  4294967232 = 192 · 22369621 instead, a multiple of 16 · 12, which keeps the phase for R2 = 2, 3 and 4. `dsp_selftest.py` runs units that
+  straddle this wrap.
+* **Nothing may divide:** core 1 cannot call the ROM's division (captures overwrite the ROM's data), so all of it is 32-bit multiplies,
+  shifts and adds.
+
+To add another ratio: a `DESIGNS` entry in `design_taps.py`, the ratio-to-filter selection in `dsp.c`, `NB_SET_DECIM` and the `dspbench`
+check in `main.c`, `dsp_selftest.py`, and `dspbench`. Internal RAM is tight (the `.data` region is 8 KB): the two copies of `dsp.c`
+(one per core) share their tap tables, the core 1 copy is compiled with `DSP_TAPS_EXTERN`.
+
+## Tests
+
+| Test | What it proves | Hardware |
+|---|---|---|
+| `python esp32s3/tools/dsp_selftest.py` | `dsp.c` is bit-exact against an independent integer model for R2 2, 3 and 4, cs8/cs16, random unit lengths; random start phases of the block counter and the wrap of the pair index; passband flat, aliases at the predicted level | no |
+| `python host/python/espdr_nb.py selftest` | packet parser against a simulated ESP: clean, with gaps, with stray bytes; bench | no |
+| `python host/python/espdr_rtltcp.py selftest` | rtl_tcp server against a simulated ESP: header, tones at the radio's rate (250 and 333 ksps), 1.024 and 2.4 MS/s, DC removal, retune, reconnect | no |
 | `python host/python/espdr_nb.py dspbench` | cycles per unit on the chip, SIMD (FIR and CIC) vs C | yes |
 | `make -C esp32s3 NARROWBAND=1 PROFILE=1` + `dspbench --profile` | cycles per section (stage 1, comb and history, FIR) | yes |
 
