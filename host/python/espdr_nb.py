@@ -52,6 +52,18 @@ class ProtocolError(Exception):
     pass
 
 
+class CommandError(ProtocolError):
+    """The ESP answered a control request with an error status."""
+
+    def __init__(self, op, arg, status):
+        self.op, self.arg, self.status = op, arg, status
+        hint = ""
+        if op == ESP_SET_LO:
+            hint = (" (the frequency is outside 1841.666667-2790 MHz)" if status == 2 else
+                    " (the PLL did not lock there: the edges of the range, and a gap near 2210 MHz, depend on the board)")
+        super().__init__(f"op {op} arg {arg}: status {status}{hint}")
+
+
 def request(op, arg, seq):
     head = struct.pack("<BBHH", REQ_MAGIC, op, arg & 0xFFFF, seq & 0xFFFF)
     return head + struct.pack("<I", zlib.crc32(head))
@@ -117,7 +129,7 @@ class Link:
         self.send(op, arg)
         status, value = self._response(op)
         if status not in allow:
-            raise ProtocolError(f"op {op} arg {arg}: status {status}")
+            raise CommandError(op, arg, status)
         return status, value
 
     def stat(self, index):

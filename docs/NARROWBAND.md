@@ -23,7 +23,7 @@ Full-Speed carries.
 
 | | |
 |---|---|
-| Frequency range | 2.21 to 2.79 GHz (the Wi-Fi receiver's tuning range) |
+| Frequency range | 1.84 to 2.79 GHz (the Wi-Fi receiver's tuning range, including eSpDR's 5/6 conversion mode below 2.21 GHz) |
 | Sample rate | 250 ksps complex, about ±100 kHz usable (flat to 0.04 dB; aliases at least 70 dB down) |
 | Sample format | int8 I/Q (or int16), 0.5 MB/s (1.0 MB/s) over USB |
 | Retuning | about 50 ms of silence |
@@ -150,7 +150,7 @@ Start the bridge and leave it running:
 python host/python/espdr_rtltcp.py --ppm 0
 ```
 
-In SDR++ choose the source **RTL-TCP**, host `127.0.0.1`, port `1234`, and press play. Tune between 2210 and 2790 MHz.
+In SDR++ choose the source **RTL-TCP**, host `127.0.0.1`, port `1234`, and press play. Tune between 1842 and 2790 MHz.
 Any sample rate SDR++ offers works: the bridge interpolates the 250 ksps stream to the rate the client asks for
 (250 kS/s itself is passed through unchanged). The signal is still only about 200 kHz wide, whatever rate is shown.
 
@@ -158,7 +158,7 @@ What the bridge does: the radio runs only while a client is connected; a frequen
 reconfigures the radio and starts it again (about 50 ms of silence); the spectrum is conjugated, because the radio
 delivers *LO minus RF*, so that a higher RF is a higher frequency; the DC offset is removed; the client's gain
 (0 to 49.6 dB) is mapped to the ESP's gain selector 30 to 80 (`--gain-min`, `--gain-max`); frequencies outside the
-ESP's range are clamped and logged. It serves one client at a time, on `127.0.0.1` unless you pass `--listen`. There is
+ESP's range are clamped and logged, and a frequency the PLL cannot lock keeps the previous one. It serves one client at a time, on `127.0.0.1` unless you pass `--listen`. There is
 no authentication, so do not expose it to a network you do not trust.
 
 Other rtl_tcp clients work the same way; for example in *pluto-advanced-rx* choose the device "RTL-SDR" and enter
@@ -225,6 +225,11 @@ synthesizer (up to ±190 Hz) digitally.
   receive band; with the LO at 2400 MHz a line sits at the centre, about 10 dB stronger than a −40 dBm carrier at gain 60. Do not
   mistake it for a signal. Faint lines at about ±1.6 kHz and ±9 kHz around strong signals were also seen; their origin is not
   investigated.
+* **Sensitivity falls off away from 2.4 GHz.** The board's antenna and matching are made for Wi-Fi. At 1.9 GHz, which works through
+  eSpDR's 5/6 conversion mode, a test carrier needed about 40 dB more power than at 2.4 GHz for the same signal-to-noise ratio.
+* **The edges of the tuning range depend on the board.** The PLL has to lock at each request. On the test board it did not lock below
+  1848 MHz or between about 2210 and 2219 MHz (the switch between the two conversion modes); every other frequency up to 2790 MHz worked.
+  The tools report such a request (`status 6`), and the bridge then stays on the last frequency that worked and says so.
 * **RX only.** The firmware never transmits.
 * **One board tested.** Please report others, with `lsusb` and the output of `bench`.
 * **Image rejection** (I/Q balance of the Wi-Fi front end) is not measured.
@@ -238,6 +243,7 @@ synthesizer (up to ±190 Hz) digitally.
 | `No serial data received` / *Failed to connect* while loading | Wrong port, a program holds it (a running bridge or SDR++?), or the cable is power-only. |
 | The firmware stops answering after you open the port yourself | Do not clear DTR and RTS one after the other on the native port: DTR=0 with RTS=1 is its reset sequence and sends the chip back to the ROM loader. The tools here leave the lines alone. |
 | Runs end after a second with `RUN FAILED` | Code 7 or 8 means the signal processing was too slow, code 2 a late poll. Use the supported 250 ksps; see [internals](NARROWBAND-INTERNALS.md). |
+| `op 20 arg ...: status 2` | The frequency is outside 1841.666667 to 2790 MHz. |
 | `WARNING: ... samples lost` | USB too slow for this host or hub. Try another port directly on the machine, or `--format cs8`. |
 | After `--flash` the board reboots in a loop (the UART shows `ets_loader.c` or `abort()`) | The image must come from this tree's `make NARROWBAND=1` or a release of at least 0.1.1; older images lack the descriptor the bootloader needs. Fix by loading a good image with `--flash`, or erase the flash. |
 | ModemManager sends bytes to the port | Install `host/udev/70-espdr.rules` (step 3 above). |
