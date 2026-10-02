@@ -29,7 +29,7 @@ import espdr_nb as nb
 
 HEADER = b"RTL0" + struct.pack(">II", 5, 29)  # "R820T" tuner with 29 gain steps: what clients expect to see
 SRC_RATE = 250_000.0                          # ESP output at --decim 4
-LO_MIN, LO_MAX = 2_210_000_000, 2_790_000_000  # ESP tuning range, Hz
+LO_MIN, LO_MAX = 1_841_666_667, 2_790_000_000  # ESP tuning range, Hz (ESP_LO_MIN_HZ / ESP_LO_MAX_HZ in protocol/control.h)
 # R820T gain table in tenths of a dB, for rtl_tcp's "set gain by index"
 GAINS_TENTHS = (0, 9, 14, 27, 37, 77, 87, 125, 144, 157, 166, 197, 207, 229, 254, 280, 297, 328, 338, 364, 372,
                 386, 402, 421, 434, 439, 445, 480, 496)
@@ -232,6 +232,7 @@ class Bridge:
         self.dc_block = dc_block
         self.quit = False
         self.session = None
+        self.last_good = 2_400_000_000  # the last frequency the ESP accepted (2.4 GHz is where it works best)
         self.srv = socket.socket()
         self.srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.srv.bind(listen)
@@ -315,7 +316,15 @@ class Bridge:
             freq, ppm, gain, _, version = self.params.snapshot()
             hw_freq = int(round(freq / (1 + ppm * 1e-6)))
             t0 = time.monotonic()
-            lo = nb.configure_receiver(link, hw_freq, 4, nb.FORMATS["cs8"], 4, gain)
+            try:
+                lo = nb.configure_receiver(link, hw_freq, 4, nb.FORMATS["cs8"], 4, gain)
+            except nb.CommandError as e:
+                if e.op != nb.ESP_SET_LO:
+                    raise
+                log(f"the ESP refused {freq / 1e6:.3f} MHz ({e}); staying at {self.last_good / 1e6:.3f} MHz")
+                self.params.set(freq=self.last_good)
+                continue
+            self.last_good = freq
             # Where the LO really is (nominal clock: lo; actual crystal: lo*(1+ppm)) against where the client asked:
             shift = lo * (1 + ppm * 1e-6) - freq
             log(f"tuned {freq / 1e6:.6f} MHz (LO {lo / 1e6:.6f} MHz, fine shift {shift:+.0f} Hz), gain {gain}"
@@ -447,6 +456,8 @@ class SimEsp:
         self.ops.append((op, full))
         if op == nb.CTL_INFO:
             self.out += self._resp(op, 0, nb.FIRMWARE_ID)
+        elif op == nb.ESP_SET_LO and full < 1_848_000_000:  # like the test board: no PLL lock down there
+            self.out += self._resp(op, 6, 0)
         elif op == nb.ESP_SET_LO:
             self.lo = round(full / self.LO_STEP) * self.LO_STEP
             self.out += self._resp(op, 0, int(round(self.lo)))
@@ -572,6 +583,16 @@ def selftest():
           and gain_cmds[-1] == bridge._gain_sel(300), f"LO commands {lo_cmds[-2:]}, gain {gain_cmds[-1]}")
     f, level, _ = _tone(_collect(s, 0.4, 2_400_000), 2_400_000)
     check("tone after retune", abs(f - 30_000) < 400, f"{f:+.0f} Hz (transmitter 30 kHz above the new centre)")
+    cmd(s, CMD_FREQ, 1_700_000_000)            # below the ESP's range: clamped to its lower limit, not refused
+    _drain(s, 1.0)
+    lo_cmds = [a for op, a in sim.ops if op == nb.ESP_SET_LO]
+    check("frequency below the range is clamped", LO_MIN in lo_cmds and LO_MIN == 1_841_666_667, f"LO commands {lo_cmds[-3:]}")
+    # the simulated ESP refuses that (no PLL lock, as on the test board): the bridge goes back to the last good frequency
+    # and keeps streaming
+    f, level, _ = _tone(_collect(s, 0.4, 250_000), 250_000)
+    check("refused frequency falls back and keeps streaming", lo_cmds[-1] == 2_400_020_000 and level > 25,
+          f"last LO command {lo_cmds[-1]}, {level:.0f} dB")
+    cmd(s, CMD_FREQ, 2_400_000_000)
     s.close()
     time.sleep(0.5)
     s, hdr = connect()
