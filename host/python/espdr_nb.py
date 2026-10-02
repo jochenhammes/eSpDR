@@ -193,8 +193,8 @@ class Link:
             stats["skipped"] += 1
 
     # -- throughput test
-    def bench(self, seconds):
-        self.send(NB_BENCH, seconds)
+    def bench(self, seconds, mode=0):
+        self.send(NB_BENCH, seconds | mode << 16)
         got = blocks = bad = 0
         counter = None
         t0 = None
@@ -378,7 +378,7 @@ def report(link, status, value, stats, elapsed):
 def cmd_bench(args):
     link = open_link(args.port)
     check_firmware(link)
-    r = link.bench(args.seconds)
+    r = link.bench(args.seconds, args.mode)
     mbs = r["host_bytes"] / r["seconds"] / 1e6 if r["seconds"] else 0
     print(f"{r['host_bytes']} bytes in {r['seconds']:.2f} s = {mbs:.3f} MB/s; "
           f"ESP sent {r['esp_bytes']} bytes; {r['bad']} bad blocks")
@@ -520,6 +520,9 @@ def main():
                         "instead of conjugating it to the usual RF-up = frequency-up")
     b = sub.add_parser("bench", help="measure the USB throughput")
     b.add_argument("--seconds", type=int, default=5)
+    b.add_argument("--mode", type=int, choices=(0, 1, 2), default=0,
+                   help="how the firmware writes the USB packets: 0 as the stream does (default), 1 byte-wise with a poll "
+                        "per byte (the old way), 2 one check then 64 writes")
     d = sub.add_parser("dspbench", help="time the on-chip decimator without a capture")
     d.add_argument("--profile", action="store_true", help="per-section cycles (firmware built with PROFILE=1)")
     sub.add_parser("selftest", help="check the parser against a simulated ESP")

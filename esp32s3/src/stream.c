@@ -88,8 +88,37 @@ unsigned stream_set(unsigned op, uint32_t value, uint32_t *effective)
 
 static inline uint32_t fifo_fill(void) { return q.head_total - q.tail_total; }
 
-/* Writes one full 64-byte packet if the endpoint has room. */
+/*
+ * Writes one packet if the endpoint has room. A full 64-byte packet waits for the hardware's IN-EMPTY status, which the
+ * register description defines as "up to 64 bytes can be written now", and then writes all of it without polling in
+ * between (the hardware flushes a full packet by itself): 4 us instead of 10 us, and 0.87 instead of 0.77 MB/s on the test host.
+ * A shorter packet uses the byte-wise path and WR_DONE.
+ */
 static inline int usb_send_packet(const uint8_t *p, unsigned n)
+{
+    if (n == USB_PACKET) {
+        if (!(REG(USB_SERIAL_JTAG_INT_RAW_REG) & USB_SERIAL_JTAG_SERIAL_IN_EMPTY_INT_RAW))
+            return 0;
+        REG(USB_SERIAL_JTAG_INT_CLR_REG) = USB_SERIAL_JTAG_SERIAL_IN_EMPTY_INT_CLR;
+        for (unsigned i = 0; i < n; i++)
+            REG(USB_SERIAL_JTAG_EP1_REG) = p[i];
+        return 1;
+    }
+    if (!(REG(USB_SERIAL_JTAG_EP1_CONF_REG) & USB_SERIAL_JTAG_SERIAL_IN_EP_DATA_FREE))
+        return 0;
+    REG(USB_SERIAL_JTAG_INT_CLR_REG) = USB_SERIAL_JTAG_SERIAL_IN_EMPTY_INT_CLR; /* keep the status honest for the next packet */
+    for (unsigned i = 0; i < n; i++) {
+        while (!(REG(USB_SERIAL_JTAG_EP1_CONF_REG) & USB_SERIAL_JTAG_SERIAL_IN_EP_DATA_FREE)) {
+        }
+        REG(USB_SERIAL_JTAG_EP1_REG) = p[i];
+    }
+    REG(USB_SERIAL_JTAG_EP1_CONF_REG) = USB_SERIAL_JTAG_WR_DONE;
+    return 1;
+}
+
+/* Bench modes for comparison (NB_BENCH, mode 1 and 2): the old byte-wise write with a DATA_FREE poll per byte, and one DATA_FREE check
+ * followed by 64 writes. */
+static inline int usb_send_polled(const uint8_t *p, unsigned n)
 {
     if (!(REG(USB_SERIAL_JTAG_EP1_CONF_REG) & USB_SERIAL_JTAG_SERIAL_IN_EP_DATA_FREE))
         return 0;
@@ -99,6 +128,15 @@ static inline int usb_send_packet(const uint8_t *p, unsigned n)
         REG(USB_SERIAL_JTAG_EP1_REG) = p[i];
     }
     REG(USB_SERIAL_JTAG_EP1_CONF_REG) = USB_SERIAL_JTAG_WR_DONE;
+    return 1;
+}
+
+static inline int usb_send_free(const uint8_t *p, unsigned n)
+{
+    if (!(REG(USB_SERIAL_JTAG_EP1_CONF_REG) & USB_SERIAL_JTAG_SERIAL_IN_EP_DATA_FREE))
+        return 0;
+    for (unsigned i = 0; i < n; i++)
+        REG(USB_SERIAL_JTAG_EP1_REG) = p[i];
     return 1;
 }
 
@@ -279,7 +317,7 @@ uint32_t stream_dsp_bench(uint32_t arg)
 /* ---- throughput test ------------------------------------------------------------------ */
 
 /* Streams 64-byte blocks (0xBE, 0xEF, 16-bit counter, ...) as fast as the host takes them. */
-uint32_t stream_bench(unsigned seconds)
+uint32_t stream_bench(unsigned seconds, unsigned mode)
 {
     const uint32_t second = CPU_CYCLES_PER_SECOND;
     uint32_t sent = 0, counter = 0;
@@ -300,7 +338,10 @@ uint32_t stream_bench(unsigned seconds)
         put16(block + 2, counter);
         for (unsigned i = 4; i < USB_PACKET; i++)
             block[i] = (uint8_t)(i * 3 + counter);
-        if (usb_send_packet(block, USB_PACKET)) {
+        int sent_one = mode == 0 ? usb_send_packet(block, USB_PACKET)
+                       : mode == 1 ? usb_send_polled(block, USB_PACKET)
+                                   : usb_send_free(block, USB_PACKET);
+        if (sent_one) {
             counter++;
             sent += USB_PACKET;
             last_progress = cpu_cycles();

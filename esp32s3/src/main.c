@@ -220,9 +220,9 @@ static uint8_t execute(uint8_t op, uint32_t arg, uint32_t *value)
     case NB_SET_OUTSHIFT:
         return stream_set(op, arg, value);
     case NB_BENCH:
-        if (arg > 65535)
+        if ((arg >> 16) > 3)
             return CTL_BAD_ARGUMENT;
-        *value = stream_bench(arg);
+        *value = stream_bench(arg & 0xFFFF, arg >> 16);
         return CTL_OK;
     case NB_DSPBENCH:
         if ((arg & 15) != 2 && (arg & 15) != 4)

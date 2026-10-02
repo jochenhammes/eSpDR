@@ -38,4 +38,4 @@ uint32_t stream_stat(unsigned index);
 uint32_t stream_dsp_bench(uint32_t arg);
 
 /* USB throughput test (NB_BENCH): returns the bytes sent. */
-uint32_t stream_bench(unsigned seconds);
+uint32_t stream_bench(unsigned seconds, unsigned mode);
