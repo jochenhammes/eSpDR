@@ -81,8 +81,8 @@ transmitter. Other boards and hosts are untested; please
    python host/python/espdr_load.py iq-source-nb.bin
    ```
 
-   The image runs from RAM and is lost at power-off; load it again after every power cycle. Nothing is written to
-   flash, so you cannot brick the board with it. On success the script prints the receiver's port (the board's
+   The image runs from RAM and is lost at power-off; load it again after every power cycle (or make the board start it by itself,
+   see [below](#optional-start-by-itself-at-power-up)). By default nothing is written to flash, so you cannot brick the board with it. On success the script prints the receiver's port (the board's
    native USB port, USB id `303a:1001`, for example `/dev/ttyACM1`).
 
 5. Check the link:
@@ -112,6 +112,20 @@ python host/python/espdr_load.py esp32s3/build-nb/iq-source.bin
 `make -C esp32s3` without `NARROWBAND=1` still builds the original FPGA firmware, byte-identical to before. The build
 directories differ (`build` and `build-nb`), but if you change flags, remove the directory first: `make` does not
 notice flag changes.
+
+## Optional: start by itself at power-up
+
+If you want the board to be a receiver as soon as it gets power, write the image to its flash instead of its RAM:
+
+```sh
+python host/python/espdr_load.py --flash iq-source-nb.bin
+```
+
+This **overwrites the board's flash** (bootloader at `0x0`, partition table at `0x8000`, the image at `0x10000`), so whatever program was
+there before is gone, and the script asks before it writes. From then on the board boots straight into the receiver; you only start
+`espdr_rtltcp.py` (or SDR++ through it). To go back to RAM-only use, erase the flash (`python -m esptool erase-flash`): the board then waits
+in its ROM loader and `espdr_load.py` works as before. How it works, and its limits (tested with quad-flash boards), are in
+[esp32s3/flash/README.md](../esp32s3/flash/README.md).
 
 ## First run
 
@@ -225,6 +239,7 @@ synthesizer (up to ±190 Hz) digitally.
 | The firmware stops answering after you open the port yourself | Do not clear DTR and RTS one after the other on the native port: DTR=0 with RTS=1 is its reset sequence and sends the chip back to the ROM loader. The tools here leave the lines alone. |
 | Runs end after a second with `RUN FAILED` | Code 7 or 8 means the signal processing was too slow, code 2 a late poll. Use the supported 250 ksps; see [internals](NARROWBAND-INTERNALS.md). |
 | `WARNING: ... samples lost` | USB too slow for this host or hub. Try another port directly on the machine, or `--format cs8`. |
+| After `--flash` the board reboots in a loop (the UART shows `ets_loader.c` or `abort()`) | The image must come from this tree's `make NARROWBAND=1` or a release of at least 0.1.1; older images lack the descriptor the bootloader needs. Fix by loading a good image with `--flash`, or erase the flash. |
 | ModemManager sends bytes to the port | Install `host/udev/70-espdr.rules` (step 3 above). |
 | Port names change (`ttyACM1`, `ttyACM2`, ...) | They depend on plug order. `espdr_load.py` and the tools find the right ones by USB id. |
 | SDR++ shows a mirrored spectrum | Use the bridge (it conjugates) or `--convert cf32`; raw files keep the radio's *LO minus RF*. |

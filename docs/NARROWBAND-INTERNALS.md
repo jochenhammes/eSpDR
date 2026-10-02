@@ -59,6 +59,24 @@ samples at both ends. The result is bit-identical to the C version, which stays 
 (`dspbench` runs both paths on the same noise and reports the number of differing bytes, 0 for R2 2 and 4, cs8 and cs16, both
 core copies).
 
+## Booting from flash
+
+The image is built to run from RAM after a download-mode load, and it also boots from flash, with ESP-IDF's standard second-stage bootloader in
+front of it (`esp32s3/flash/`, written by `espdr_load.py --flash`). Three things make that work:
+
+* **No code in the first 32 KB of instruction RAM.** The ROM and the bootloader keep `0x40370000-0x40377FFF` for the flash cache, so the
+  narrowband link puts the exception vectors in core 1's bank (`0x4037C000`) instead of `0x40374000`. The Makefile derives that linker script
+  from `memory.ld` with `sed`; the FPGA firmware keeps `memory.ld` and stays byte-identical.
+* **An application descriptor.** The bootloader reads an `esp_app_desc_t` from the start of the first flash-mapped segment and checks its
+  eFuse-revision limits. `src/app_desc.c` provides one (magic word, revision limits 0 to 9999).
+* **Two placeholder flash segments.** The bootloader maps the application's read-only data (`0x3C000000`) and code (`0x42000020`) through the
+  flash cache and asserts if there are none. The link adds 256 bytes of the former (holding the descriptor) and 16 bytes of the latter. Nothing
+  uses them at run time.
+
+Loading the same image into RAM with `load-ram` still works: the ROM writes the placeholder bytes into the (unmapped) cache windows, which is harmless.
+When the image comes from flash, the bootloader has also enabled the flash cache and set up the MMU; the firmware does not touch either. Timing
+is identical to the RAM start (`dspbench` and live runs give the same cycle counts).
+
 ## The packet stream (`protocol/narrowband.h`, `esp32s3/src/stream.c`)
 
 Each unit becomes one packet: a 20-byte header (magic `0xE5 0x5D`, format, R2, sample count, dropped-unit count, unit
