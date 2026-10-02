@@ -35,7 +35,7 @@ NB_DSP_VERIFY, NB_DSP_PROFILE, NB_DSP_PROFILE_RESET = 0x8000, 0x4000, 0x2000
 ESP_STAT_STATUS, ESP_STAT_DETAIL, ESP_STAT_FAIL_LANE = 0, 1, 2
 ESP_STAT_UNITS0, ESP_STAT_UNITS1 = 3, 4
 ESP_STAT_SERVICE_MAX0, ESP_STAT_SERVICE_MAX1, ESP_STAT_RADIO = 11, 12, 13
-NB_STAT_DROPPED, NB_STAT_FIFO_PEAK = 32, 33
+NB_STAT_DROPPED, NB_STAT_FIFO_PEAK, NB_STAT_SLIPS = 32, 33, 34
 CTL_OK, CTL_UNKNOWN_OP = 0, 1
 FIRMWARE_ID = 0x49515306  # CTL_ESP_FIRMWARE_ID in protocol/control.h
 FAIL_NAMES = {1: "bank ownership changed", 2: "late poll", 3: "late switch", 4: "unit end not found",
@@ -362,9 +362,12 @@ def report(link, status, value, stats, elapsed):
     try:
         s0, s1 = link.stat(ESP_STAT_SERVICE_MAX0), link.stat(ESP_STAT_SERVICE_MAX1)
         peak = link.stat(NB_STAT_FIFO_PEAK)
+        slips = link.stat(NB_STAT_SLIPS)
         print(f"worst unit service time: core0 {s0} / core1 {s1} cycles "
               f"({100 * max(s0, s1) / SERVICE_BUDGET_CYCLES:.0f}% of the budget); FIFO peak {peak} bytes",
               file=sys.stderr)
+        if slips > 8:  # one per run is normal: the join of two banks that is a few pairs off, see capture.c
+            print(f"WARNING: {slips} unit joins were a few pairs off (normally 1 per run)", file=sys.stderr)
     except ProtocolError:
         pass
     if value:

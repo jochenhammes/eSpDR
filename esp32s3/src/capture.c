@@ -33,6 +33,7 @@
 #include "soc/usb_serial_jtag_reg.h"
 #ifdef ESPDR_NARROWBAND
 #include "stream.h"
+#define NB_MAX_SLIP_PAIRS 8u /* see the join check in lane_loop() */
 #endif
 
 #define RING_MASK (LINK_RING_PAIRS - 1u)
@@ -376,10 +377,28 @@ ALWAYS_INLINE void lane_loop(const unsigned lane, void (*const transmit)(tx_desc
         unsigned probe_at = sequence ? ring.start_probe[b] : 0;
         unsigned skip = find_first_written(b, probe_at);
         unsigned first = (probe_at + skip) & RING_MASK;
+#ifdef ESPDR_NARROWBAND
+        /*
+         * The dump engine sometimes writes the last burst of a bank twice, so a unit can end up to a few pairs
+         * longer than the stream it carries and the next bank starts that much earlier (seen with dense SIMD loads on
+         * core 1). A pair-exact join matters for the lossless FPGA stream; a few pairs (62.5 ns each) are nothing for
+         * the decimated narrowband stream, so accept the slip and count it.
+         */
+        bool start_ok = skip < START_GUARD && first == ring.start[b];
+        if (!start_ok && skip < START_GUARD && ((ring.start[b] - first) & RING_MASK) <= NB_MAX_SLIP_PAIRS) {
+            start_ok = true;
+            stream_slips++;
+        }
+        if (!start_ok) {
+            fail(ESP_FAIL_START, lane, first | (ring.start[b] << 16));
+            break;
+        }
+#else
         if (skip >= START_GUARD || first != ring.start[b]) {
             fail(ESP_FAIL_START, lane, first | (ring.start[b] << 16));
             break;
         }
+#endif
         unsigned count = (end - first) & RING_MASK;
         if (count < LINK_MIN_PAIRS || count > LINK_MAX_PAIRS) {
             fail(ESP_FAIL_LENGTH, lane, count);

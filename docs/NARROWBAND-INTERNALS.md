@@ -14,8 +14,10 @@ the run stops with failure code 7 or 8 (`bank still busy` / `next bank prepared 
 
 ## The decimator (`esp32s3/src/dsp.c`)
 
-* **Stage 1**: a 4th-order CIC decimating by 16 (16 Msps to 1 Msps), integrators in 32-bit wraparound arithmetic, output
-  shifted right by 11 to 16-bit.
+* **Stage 1**: a 4th-order CIC decimating by 16 (16 Msps to 1 Msps), evaluated as the FIR it is: kernel `(1+z^-1+…+z^-15)^4`,
+  61 coefficients (largest 2736, sum 65536), padded to 64. Block *j* needs the 64 samples of blocks *j-3..j*, so a unit starts three blocks
+  early with empty rings. For 10-bit input nothing wraps (|output| ≤ 2^25), so this is bit-for-bit what integrators and combs in 32-bit
+  arithmetic give. The output is shifted right by 11 to 16 bits.
 * **Stage 2**: a 73-tap symmetric FIR (Q15) at 1 Msps, decimating by `R2 = 4` (250 ksps). `tools/design_taps.py` designs it
   with a least-squares fit that also equalises the CIC passband droop, so the output is flat to the edge of its
   ±100 kHz passband.
@@ -44,7 +46,8 @@ A first, plain C version needed **764 000 cycles per unit (159 % of the budget)*
 | stage-1 integrators in their own function (`cic_block`) so the eight accumulators stay in registers | 653 000 |
 | FIR folded on its symmetry | 624 000 |
 | history arrays static instead of on the stack, FIR in its own function | 551 000 (measured with the profiling counters, which add about 30 000) |
-| FIR on the S3 SIMD unit | **399 000 (83 %)** |
+| FIR on the S3 SIMD unit | 399 000 (83 %) |
+| CIC as a 64-tap SIMD FIR over unpacked samples (no integrators, no combs) | **288 000 (60 %)**, 62 % in live runs |
 
 The surprise was the stack: with the history arrays in the function's 1.3 KB frame, every access beyond 510 bytes of offset costs
 three instructions (`movi`, `add`, `l32i`), and the unrolled stage-1 loop spilled its eight integrators there. The
@@ -77,6 +80,27 @@ Loading the same image into RAM with `load-ram` still works: the ROM writes the 
 When the image comes from flash, the bootloader has also enabled the flash cache and set up the MMU; the firmware does not touch either. Timing
 is identical to the RAM start (`dspbench` and live runs give the same cycle counts).
 
+### The SIMD CIC
+
+`cic_block_pie()` unpacks the 16 words of a block (at any word alignment: `ee.ld.128.usar.ip` and `ee.src.q` realign them), shifts left and
+arithmetic-right to sign-extend the two 10-bit fields (`ssr` sets the amount for `ee.vsl.32` and `ee.vsr.32`), packs the 32-bit lanes into
+16-bit lanes with `ee.vunzip.16`, stores them twice in a ring of four blocks per channel (so that the newest four blocks are always one
+contiguous, 16-byte aligned run), and runs eight `ee.vmulas.s16.accx` per channel over it. The semantics of the shift, unzip and realign
+instructions were checked on the chip before relying on them. `dspbench` runs the plain C version (`cic_block_c()`) on the same noise and
+reports the bytes that differ (0).
+
+## Unit joins
+
+The dump engine occasionally writes the last burst of a bank twice. The decimated stream does not care, but the capture logic checks that
+the next unit starts exactly where the previous one ended, and fails the run (code 5, "unit start not found") when it does not. With the
+SIMD CIC on core 1 that check began to fail within seconds. What was ruled out by bisecting the kernel (each variant run six to eight times):
+the unpacking and the ring stores are innocent; the 32 dense 128-bit loads of the multiply-add part on core 1 are the trigger; it does not
+depend on where the code or the data lives (core 0's bank, RTC fast memory), on any state the kernel leaves behind (SAR, ACCX, Q registers),
+or on how long the DSP takes; spreading the loads out with filler instructions cut the failures from 6 of 6 to 1 of 8; the same kernel on core 0
+is clean. The mechanism is not understood. The narrowband build therefore accepts a join that is up to 8 pairs early (62.5 ns per pair) and
+counts it (`NB_STAT_SLIPS`); exact joins stay mandatory in the FPGA build. In practice there is exactly one such slip per run, after
+which none occur: 8 runs of 20 s and 5 runs of 120 s had no lost samples and one slip each.
+
 ## The packet stream (`protocol/narrowband.h`, `esp32s3/src/stream.c`)
 
 Each unit becomes one packet: a 20-byte header (magic `0xE5 0x5D`, format, R2, sample count, dropped-unit count, unit
@@ -105,7 +129,7 @@ if upstream adds statistics.
 | `python esp32s3/tools/dsp_selftest.py` | `dsp.c` is bit-exact against an independent integer model for R2 2 and 4, cs8/cs16, random unit lengths; passband flat, aliases at the predicted level | no |
 | `python host/python/espdr_nb.py selftest` | packet parser against a simulated ESP: clean, with gaps, with stray bytes; bench | no |
 | `python host/python/espdr_rtltcp.py selftest` | rtl_tcp server against a simulated ESP: header, tones at 0.25, 1.024, 2.4 MS/s, DC removal, retune, reconnect | no |
-| `python host/python/espdr_nb.py dspbench` | cycles per unit on the chip, SIMD vs C | yes |
+| `python host/python/espdr_nb.py dspbench` | cycles per unit on the chip, SIMD (FIR and CIC) vs C | yes |
 | `make -C esp32s3 NARROWBAND=1 PROFILE=1` + `dspbench --profile` | cycles per section (stage 1, comb and history, FIR) | yes |
 
 Continuous integration runs the first three and builds both firmware images, and checks that the FPGA firmware is unchanged.

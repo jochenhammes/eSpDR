@@ -36,6 +36,7 @@ static struct {
     uint32_t dropped_halfword; /* saturating count carried in the packet header */
 } q;
 
+volatile uint32_t stream_slips; /* unit joins accepted with a small slip, see capture.c */
 volatile uint32_t stream_abort; /* set by capture.c when a run has failed */
 
 void stream_begin(void)
@@ -46,6 +47,7 @@ void stream_begin(void)
     q.dropped_units = 0;
     q.fifo_peak = 0;
     stream_abort = 0;
+    stream_slips = 0;
     memory_barrier();
 }
 
@@ -54,6 +56,7 @@ uint32_t stream_stat(unsigned index)
     switch (index) {
     case NB_STAT_DROPPED: return q.dropped_units;
     case NB_STAT_FIFO_PEAK: return q.fifo_peak;
+    case NB_STAT_SLIPS: return stream_slips;
     default: return 0;
     }
 }

@@ -90,6 +90,20 @@ def emit(path, designs):
             lines.append("    {" + ", ".join(str(v) for v in row) + "},")
         lines.append("};")
         lines.append("")
+    # The CIC (4th order, decimation R1) as a plain FIR over the input samples: the kernel (1+z^-1+...+z^-(R1-1))^4, 61
+    # coefficients, sum R1^4, largest value 2736 (fits int16). For block j it multiplies the 64 samples x[16(j-3)..16j+15] in
+    # time order, so the table is the kernel reversed and padded with three leading zeros: 64 entries, 16-byte aligned.
+    kern = np.ones(1, dtype=np.int64)
+    for _ in range(NCIC):
+        kern = np.convolve(kern, np.ones(R1, dtype=np.int64))
+    assert len(kern) == NCIC * (R1 - 1) + 1 and kern.max() < 32768
+    rev = [0] * (4 * R1 - len(kern)) + [int(v) for v in kern[::-1]]
+    lines.append("/* CIC4/16 as a 64-tap FIR over x[16(j-3)..16j+15], oldest sample first (see tools/design_taps.py) */")
+    lines.append("static const int16_t dsp_cic_taps[64] __attribute__((aligned(16), unused)) = {")
+    for i in range(0, 64, 8):
+        lines.append("    " + ", ".join(str(v) for v in rev[i:i + 8]) + ",")
+    lines.append("};")
+    lines.append("")
     with open(path, "w") as fh:
         fh.write("\n".join(lines))
 
