@@ -121,7 +121,7 @@ $(BUILD)/%.o: src/%.c $(wildcard src/*.h) $(wildcard $(PROTOCOL)/*.h) sdkconfig.
 	$(CC) $(APP_CFLAGS) -c $< -o $@
 
 $(BUILD)/dsp_core1.o: src/dsp.c src/dsp.h src/dsp_taps.h | $(BUILD)
-	$(CC) $(APP_CFLAGS) -DDSP_FUNC=dsp_unit_core1 '-DDSP_ATTR=__attribute__((section(".core1_text")))' -c $< -o $@
+	$(CC) $(APP_CFLAGS) -DDSP_TAPS_EXTERN -DDSP_FUNC=dsp_unit_core1 '-DDSP_ATTR=__attribute__((section(".core1_text")))' -c $< -o $@
 
 $(BUILD)/sdk/%.o: | $(BUILD)/sdk
 	$(CC) $(SDK_CFLAGS) -c $(filter %/$*.c,$(SDK_SOURCES)) -o $@

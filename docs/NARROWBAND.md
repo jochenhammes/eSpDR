@@ -1,12 +1,12 @@
 # Narrowband mode: an ESP32-S3 SDR with no FPGA
 
-A 250 ksps, 2.4 GHz software-defined receiver that needs **one ESP32-S3 board and a USB cable**. The ESP32-S3
+A 250 or 333 ksps, 2.4 GHz software-defined receiver that needs **one ESP32-S3 board and a USB cable**. The ESP32-S3
 samples the I/Q output of its own Wi-Fi receiver at 16 Msps, decimates it on the chip, and streams the result
 over USB. A small bridge makes it look like an `rtl_tcp` server, so **SDR++** and other programs can use it as a
 receiver.
 
 ```
-ESP32-S3 ADC  --16 Msps-->  CIC /16  -->  FIR /4  -->  250 ksps int8 I/Q  --USB-->  host  -->  SDR++ / GNU Radio / file
+ESP32-S3 ADC  --16 Msps-->  CIC /16  -->  FIR /4 or /3  -->  250 or 333 ksps int8 I/Q  --USB-->  host  -->  SDR++ / GNU Radio / file
               (both cores alternate between capture units; the FIR runs on the S3's SIMD unit)
 ```
 
@@ -16,7 +16,7 @@ ESP32-S3 ADC  --16 Msps-->  CIC /16  -->  FIR /4  -->  250 ksps int8 I/Q  --USB-
 text into the waterfall.*
 
 This is the same ESP32-S3 firmware base as the 80 Msps FPGA design in the main [README](../README.md); the FPGA is only
-needed for the full 80 MHz span. For a few hundred kHz it is not: 250 ksps of 8-bit samples is 0.5 MB/s, which USB
+needed for the full 80 MHz span. For a few hundred kHz it is not: 250 ksps of 8-bit samples is 0.5 MB/s (333 ksps: 0.67 MB/s), which USB
 Full-Speed carries.
 
 **What you get**
@@ -24,8 +24,8 @@ Full-Speed carries.
 | | |
 |---|---|
 | Frequency range | 1.84 to 2.79 GHz (the Wi-Fi receiver's tuning range, including eSpDR's 5/6 conversion mode below 2.21 GHz) |
-| Sample rate | 250 ksps complex, about ±100 kHz usable (flat to 0.04 dB; aliases at least 70 dB down) |
-| Sample format | int8 I/Q (or int16), 0.5 MB/s (1.0 MB/s) over USB |
+| Sample rate | 250 ksps complex, about ±100 kHz usable (flat to 0.04 dB; aliases at least 70 dB down); or 333.3 ksps with `--decim 3`, about ±133 kHz (flat to 0.02 dB, aliases at least 65 dB down) |
+| Sample format | int8 I/Q (or int16), 0.5 MB/s (1.0 MB/s) at 250 ksps, 0.67 MB/s at 333 ksps |
 | Retuning | about 50 ms of silence |
 | Direction | receive only |
 
@@ -151,8 +151,11 @@ python host/python/espdr_rtltcp.py --ppm 0
 ```
 
 In SDR++ choose the source **RTL-TCP**, host `127.0.0.1`, port `1234`, and press play. Tune between 1842 and 2790 MHz.
-Any sample rate SDR++ offers works: the bridge interpolates the 250 ksps stream to the rate the client asks for
-(250 kS/s itself is passed through unchanged). The signal is still only about 200 kHz wide, whatever rate is shown.
+Any sample rate SDR++ offers works: the bridge interpolates the radio's stream to the rate the client asks for
+(the radio's own rate is passed through unchanged). The signal is still only about 200 kHz (`--decim 3`: 270 kHz) wide, whatever rate is shown.
+
+To use the wider mode, start the bridge with `python host/python/espdr_rtltcp.py --decim 3`; SDR++ then shows a signal about 270 kHz wide.
+It needs 0.67 MB/s of USB and 61 to 65 % of the chip's time.
 
 What the bridge does: the radio runs only while a client is connected; a frequency, gain or ppm change stops the run,
 reconfigures the radio and starts it again (about 50 ms of silence); the spectrum is conjugated, because the radio
@@ -210,17 +213,19 @@ synthesizer (up to ±190 Hz) digitally.
 | | |
 |---|---|
 | USB throughput (bench, one xHCI host) | 0.87 MB/s sustained (13.6 packets of 64 bytes per ms), 0 bad blocks; the chip waits 95 % of the time for the host |
-| Narrowband stream | 0.50 MB/s at cs8 |
-| Signal processing per capture unit | 288 000 of 480 000 CPU cycles (60 %) in the on-chip test; worst unit in live runs 62 % |
-| 120 s runs, 250 ksps | 30 000 3xx samples (the end of a unit), none lost; one unit join a few pairs off per run is counted and accepted |
+| Narrowband stream | 0.50 MB/s at cs8 and 250 ksps; 0.67 MB/s at 333 ksps |
+| Signal processing per capture unit | 285 000 of 480 000 CPU cycles (59 %) at 250 ksps, 295 000 (61 %) at 333 ksps in the on-chip test; worst unit in live runs 62 % and 65 % |
+| 120 s runs, 250 ksps (and 3 × 30 s at 333 ksps: 10.0005 M samples each) | 30 000 3xx samples (the end of a unit), none lost; one unit join a few pairs off per run is counted and accepted |
 | 2 min through the bridge at 2.4 MS/s | no dropped blocks |
 | Retune | about 50 ms |
 | Filter (host test, bit-exact against an integer model) | passband flat to 0.04 dB; aliases at least 71 dB down |
 
 ## Known limitations
 
-* **Fixed 250 ksps.** The firmware also contains a 500 ksps mode (`--decim 2`), but it needs more CPU time and more USB
-  bandwidth than the chip and USB Full-Speed link provide, and it stops with `DSP too slow`. Do not use it.
+* **250 or 333 ksps, not 500.** The 500 ksps mode (`--decim 2`) needs 1.0 MB/s, but the USB Serial/JTAG port delivers at most 0.87 MB/s
+  to this host (the chip is waiting for the host 95 % of the time, one 64-byte packet at a time); with `--decim 2` about a quarter of
+  the samples are lost and the chip reports `USB too slow`. The signal processing is no longer the limit (69 % of the time budget).
+  Whether another host controller or a hub gets above 1.0 MB/s is untested.
 * **A strong spur at 2400.000 and 2440.000 MHz.** The 60th and 61st harmonics of the 40 MHz crystal are inside the
   receive band; with the LO at 2400 MHz a line sits at the centre, about 10 dB stronger than a −40 dBm carrier at gain 60. Do not
   mistake it for a signal. Faint lines at about ±1.6 kHz and ±9 kHz around strong signals were also seen; their origin is not
@@ -242,7 +247,7 @@ synthesizer (up to ±190 Hz) digitally.
 | `espdr_load.py`: *no USB-UART bridge found* | Only the native port is connected, or your board has no bridge. Use `--native`, hold BOOT, tap RESET first. |
 | `No serial data received` / *Failed to connect* while loading | Wrong port, a program holds it (a running bridge or SDR++?), or the cable is power-only. |
 | The firmware stops answering after you open the port yourself | Do not clear DTR and RTS one after the other on the native port: DTR=0 with RTS=1 is its reset sequence and sends the chip back to the ROM loader. The tools here leave the lines alone. |
-| Runs end after a second with `RUN FAILED` | Code 7 or 8 means the signal processing was too slow, code 2 a late poll. Use the supported 250 ksps; see [internals](NARROWBAND-INTERNALS.md). |
+| Runs end after a second with `RUN FAILED` | Code 7 or 8 means the signal processing was too slow, code 2 a late poll. Use 250 or 333 ksps; see [internals](NARROWBAND-INTERNALS.md). |
 | `op 20 arg ...: status 2` | The frequency is outside 1841.666667 to 2790 MHz. |
 | `WARNING: ... samples lost` | USB too slow for this host or hub. Try another port directly on the machine, or `--format cs8`. |
 | After `--flash` the board reboots in a loop (the UART shows `ets_loader.c` or `abort()`) | The image must come from this tree's `make NARROWBAND=1` or a release of at least 0.1.1; older images lack the descriptor the bootloader needs. Fix by loading a good image with `--flash`, or erase the flash. |

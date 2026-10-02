@@ -225,7 +225,7 @@ static uint8_t execute(uint8_t op, uint32_t arg, uint32_t *value)
         *value = stream_bench(arg & 0xFFFF, arg >> 16);
         return CTL_OK;
     case NB_DSPBENCH:
-        if ((arg & 15) != 2 && (arg & 15) != 4)
+        if ((arg & 15) < 2 || (arg & 15) > 4)
             return CTL_BAD_ARGUMENT;
         *value = stream_dsp_bench(arg);
         return CTL_OK;

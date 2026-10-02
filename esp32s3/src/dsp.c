@@ -181,11 +181,13 @@ unsigned DSP_ATTR DSP_FUNC(const dsp_config *cfg, const uint32_t *cur, const uin
                            unsigned count, uint32_t start, int have_prev, uint8_t *out, void (*idle)(void))
 {
     const unsigned r2 = cfg->r2;
-    const unsigned taps = r2 == 2 ? DSP_TAPS_R2_2 : DSP_TAPS_R2_4;
-    const int16_t *h = r2 == 2 ? dsp_taps_r2_2 : dsp_taps_r2_4;
+    const unsigned taps = r2 == 2 ? DSP_TAPS_R2_2 : r2 == 3 ? DSP_TAPS_R2_3 : DSP_TAPS_R2_4;
+    const int16_t *h = r2 == 2 ? dsp_taps_r2_2 : r2 == 3 ? dsp_taps_r2_3 : dsp_taps_r2_4;
 #ifdef __XTENSA__
-    const int16_t *pie_taps = r2 == 2 ? &dsp_taps_pie_r2_2[0][0] : &dsp_taps_pie_r2_4[0][0];
-    const unsigned pie_vecs = r2 == 2 ? DSP_PIE_VECS_R2_2 : DSP_PIE_VECS_R2_4;
+    const int16_t *pie_taps = r2 == 2   ? &dsp_taps_pie_r2_2[0][0]
+                              : r2 == 3 ? &dsp_taps_pie_r2_3[0][0]
+                                        : &dsp_taps_pie_r2_4[0][0];
+    const unsigned pie_vecs = r2 == 2 ? DSP_PIE_VECS_R2_2 : r2 == 3 ? DSP_PIE_VECS_R2_3 : DSP_PIE_VECS_R2_4;
 #endif
     const dsp_geometry g = dsp_geom(start, count, r2);
 
@@ -205,6 +207,7 @@ unsigned DSP_ATTR DSP_FUNC(const dsp_config *cfg, const uint32_t *cur, const uin
     for (unsigned n = 0; n < 2 * HIST; n++)
         hi[n] = hq[n] = 0;
     unsigned pos = 0, produced = 0, tick = 0, blk = 0;
+    int32_t trigger = (int32_t)g.skip; /* next block that triggers stage 2 */
     uint32_t tmp[R1];
     const unsigned shift = cfg->shift;
 
@@ -256,8 +259,9 @@ unsigned DSP_ATTR DSP_FUNC(const dsp_config *cfg, const uint32_t *cur, const uin
         }
 
         /* Stage 2: every R2-th stage-1 output from the first trigger on. */
-        if (rel < (int32_t)g.skip || ((uint32_t)rel - g.skip) & (r2 - 1u))
+        if (rel != trigger)
             continue;
+        trigger += (int32_t)r2;
         const int16_t *wi = hi + ((pos - taps) & (HIST - 1));
         const int16_t *wq = hq + ((pos - taps) & (HIST - 1));
         uint32_t c3 = cc();
