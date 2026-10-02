@@ -1,0 +1,4 @@
+# Runtime: loading the firmware and receiving
+numpy>=1.21
+pyserial>=3.5
+esptool>=5.0

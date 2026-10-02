@@ -1,0 +1,3 @@
+-r requirements.txt
+# Only for the filter design and the bit-exactness self-test of the decimator
+scipy>=1.7
