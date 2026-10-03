@@ -236,7 +236,7 @@ synthesizer (up to ±190 Hz) digitally.
 * **The edges of the tuning range depend on the board.** The PLL has to lock at each request. On the test board it did not lock below
   1848 MHz or between about 2210 and 2219 MHz (the switch between the two conversion modes); every other frequency up to 2790 MHz worked.
   The tools report such a request (`status 6`), and the bridge then stays on the last frequency that worked and says so.
-* **RX only.** The firmware never transmits.
+* **RX only.** The released firmware never transmits. A separate research build (`TXTEST=1`) that sends FM and SSB voice is described in [TX-RESEARCH.md](TX-RESEARCH.md); it is experimental.
 * **One board tested.** Please report others, with `lsusb` and the output of `bench`.
 * **Image rejection** (I/Q balance of the Wi-Fi front end) is not measured.
 

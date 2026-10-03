@@ -19,6 +19,8 @@ jobs:
         run: python host/python/espdr_nb.py selftest
       - name: rtl_tcp bridge against a simulated ESP
         run: python host/python/espdr_rtltcp.py selftest
+      - name: Research transmitter tool, signal preparation
+        run: python host/python/espdr_txtest.py --selftest
 
   firmware:
     runs-on: ubuntu-latest
@@ -37,6 +39,12 @@ jobs:
           # the image must also boot from flash: a flash-mapped data segment with the app descriptor first, and a code segment
           xtensa-esp32s3-elf-objdump -h esp32s3/build-nb/iq-source.elf | tee sections.txt
           grep -qE "\.flash\.rodata .* 3c000020 " sections.txt && grep -qE "\.flash\.text .* 42000020 " sections.txt
+      - name: The research transmit build compiles, and the receiver image has no transmit code
+        run: |
+          . "$IDF_PATH/export.sh"
+          make -C esp32s3 NARROWBAND=1 TXTEST=1 BUILD=build-tx ESPTOOL="python -m esptool"
+          xtensa-esp32s3-elf-nm esp32s3/build-tx/iq-source.elf | grep -q radio_tx_test
+          if xtensa-esp32s3-elf-nm esp32s3/build-nb/iq-source.elf | grep -q "radio_tx_"; then echo "the receiver image contains transmit code"; exit 1; fi
       - name: The original FPGA firmware is unchanged
         run: |
           . "$IDF_PATH/export.sh"

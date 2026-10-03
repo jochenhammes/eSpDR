@@ -21,7 +21,7 @@ receiver for 1.84 to 2.79 GHz: the 13 cm amateur band, QO-100 uplink, ISM, Wi-Fi
 | Bandwidth | 250 ksps complex, about ±100 kHz usable; 333 ksps, about ±133 kHz, with `--decim 3` |
 | Format | int8 I/Q, 0.5 MB/s (333 ksps: 0.67 MB/s) over USB |
 | Works with | SDR++, anything that speaks `rtl_tcp`, GNU Radio (TCP), plain files |
-| Direction | receive only |
+| Direction | receive only (a separate, experimental transmit research build exists: [docs/TX-RESEARCH.md](docs/TX-RESEARCH.md)) |
 | Status | works on the one board tested; reports from other boards wanted |
 
 ```

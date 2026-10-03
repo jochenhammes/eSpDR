@@ -1,6 +1,48 @@
 # Can the ESP32-S3 transmit? Research notes
 
-Status: research, nothing here is part of the supported firmware. The narrowband build never transmits.
+**Status: experimental research, not part of the supported firmware.** The narrowband receiver and its releases never transmit. The
+research build is made with `make -C esp32s3 NARROWBAND=1 TXTEST=1` and is loaded into RAM only (`espdr_load.py`, no flash); a reset
+returns the board to whatever is in its flash. Transmitting needs a licence: the firmware refuses anything outside 2320..2400 MHz
+(the 13 cm amateur band), limits every transmission in time, and the levels measured here are microwatts at the antenna of a plain dev board, but
+that does not change who is responsible. Everything below was measured with a PlutoSDR as the receiver at 50 cm; one board, one host.
+
+## In short
+
+The ESP32-S3 has no I/Q transmit input, but its PHY library's test-tone mode gives a carrier that can be moved in **frequency** through the
+RF PLL's sigma-delta word (459 Hz steps, 40 kHz updates) and in **amplitude** through a gain code (0.28 dB per step, 18 dB range, 20 kHz fast).
+Together that is polar modulation, and it carries:
+
+| Mode | Result |
+|---|---|
+| unmodulated carrier | clean, 2350.0125 MHz for 2350.000 requested (the crystal), thermal drift of -194 Hz in the first 5 s, afterwards 2 to 3 Hz/s |
+| FSK | +5 kHz at up to 5 kHz toggling, no dropouts (write only the low byte of the word) |
+| narrowband FM | 1 kHz tone, +-3 kHz: SINAD 31.8 dB; speech, +-2.5 kHz: understood, 19 dB SINAD in the voice band (limited by the receiver's noise) |
+| **SSB (USB)** | two-tone: unwanted sideband 61 to 63 dB and third-order intermodulation 33 dB below the wanted tones with the carrier fully suppressed (29 / 51 dB with a 55 % carrier); speech: understood, 19 s transmissions with the drift cancelled |
+
+## How to use it
+
+```sh
+make -C esp32s3 NARROWBAND=1 TXTEST=1 BUILD=build-tx           # needs the same toolchain as the receiver build
+python host/python/espdr_load.py esp32s3/build-tx/iq-source.bin # into RAM; a reset brings the old firmware back
+pip install -r host/python/requirements-tx.txt
+python host/python/espdr_txtest.py --selftest                   # signal preparation, no hardware
+# every command below needs --go, otherwise it only prints what it would do
+python host/python/espdr_txtest.py --freq-khz 2350000 --g 127 --ms 500 --go                       # carrier
+python host/python/espdr_txtest.py --freq-khz 2350000 --audio speech.wav --fm-dev 2500 --go       # FM voice, <= 4.9 s
+python host/python/espdr_txtest.py --freq-khz 2350000 --ssb speech.wav --ms 2400 --carrier 0.05 --loops 8 --go   # SSB voice, 19 s
+python host/python/espdr_txtest.py --freq-khz 2350000 --ssb twotone:700,1700 --ms 300 --carrier 0.0 --go          # SSB test signal
+```
+
+The SSB voice is **upper sideband**: tune a USB receiver to the carrier frequency (2350.000 MHz plus the crystal error of the board; on the
+tested board +12.8 kHz). With `--carrier 0.05` a faint pilot helps to tune. `--ssb-delay 1.0` (25 us) and `--drift-hz 210` are
+values measured on one board and one ambient temperature. The audio buffer holds 192 KB, which is 2.4 s of SSB or 4.9 s of FM voice;
+`--loops` repeats the SSB clip (up to 30 s in all). How the signal is prepared on the host is described in the section on polar modulation below
+and in `prepare_ssb()`. The experiments of the sections before it (`--nco-hz`, `--ladder`, `--gain-ladder`, ...) are kept so that the
+measurements can be repeated.
+
+Known limits: one board; the gain code and the delay are calibrated by hand; no compressor, no streaming (a clip must fit into the buffer); no
+receive while transmitting; the transmitter's amplitude drifts by about 3 dB in 20 s (it scales the carrier and the speech together).
+Open: streaming, computing the Hilbert transform and the polar conversion on the ESP, and a TX mode in the normal firmware (see the end of this file).
 
 ## Stage 0: what the vendor PHY library does for a TX tone (disassembly only, nothing measured)
 
@@ -198,7 +240,7 @@ the playback loops read words (`tx_byte()`), and a readback op (79) verifies it.
 
 ## SSB with speech (measured)
 
-`da2jh-test.wav` (the first 2.4 s: mono, 8 kHz, 300..2700 Hz, normalised), USB with a carrier at 0.55 of the peak, 40 kHz updates, delay 1.0,
+a 5.3 s speech recording (the first 2.4 s: mono, 8 kHz, 300..2700 Hz, normalised), USB with a carrier at 0.55 of the peak, 40 kHz updates, delay 1.0,
 PlutoSDR 20 dB at 50 cm; 96 000 updates, none late. Spectrograms of the reference, of the received baseband and of the product-detector
 audio are in `images/tx-ssb-speech.png`: pitch harmonics, formants and pauses arrive intact, the mirror sideband is visibly weaker
 (unwanted sideband 23.5 dB below the wanted one in the 300..2700 Hz speech band; carrier 5 dB over the speech power).
@@ -230,7 +272,7 @@ from run to run to about 20 Hz. Within the first 5 s the drift is almost over; a
 **Compensation.** The firmware cancels the fast part itself (`radio_tx_ssb()`, parameter `drift_hz` = +210 Hz, decay of 1/32768 per update =
 0.82 s at 40 kHz), by adding a second-order-free first-order-shaped correction to the word deltas, once, so that looped passes do not repeat it.
 
-**19.2 s of SSB speech** (`da2jh-test.wav`, the first 2.4 s played 8 times in a row, USB, carrier ratio 0.55, 40 kHz updates, delay 1.0,
+**19.2 s of SSB speech** (the same recording, the first 2.4 s played 8 times in a row, USB, carrier ratio 0.55, 40 kHz updates, delay 1.0,
 drift 210 Hz): 96 000 x 8 updates, none late. The carrier stays within +-20 Hz of its mean (-198 ... -160 Hz against the reference), the level of
 the speech sideband against the carrier is the same in every pass (-22.1 and -14.0 dB at the two measuring points), the amplitude of
 carrier and speech together falls by 3.5 dB across the transmission (the gain drift above). Heard live on a second computer (HackRF, SDR++ with a USB
@@ -265,4 +307,39 @@ carrier shrinks (the envelope passes through zero) and then stays there; the unw
 **Speech with 5 % carrier** (`--carrier 0.05`, 19.2 s looped): averaged over 7 s the energy sits 300 to 3000 Hz above the carrier, with the voice
 fundamental at 513.0 to 513.2 kHz at -70 dB; the mirror region (0.3 to 0.7 kHz below the carrier) is at -97 dB, at least 27 dB lower and
 limited by the noise floor of the measurement (the two-tone result above is the better figure).
+
+
+
+## Repeated FM speech with the upload fixed, and a second upload bug (measured)
+
+After the 32-bit fix the FM speech (the same recording, +-2.5 kHz, 40 kHz updates, second-order error feedback in the firmware) gives a
+demodulated deviation of 2125 Hz against 2087 Hz in the input and a voice-band SINAD of **19.0 dB** (15.7 dB before), with the carrier-to-noise ratio of
+the Pluto at about 30 dB; the voice-band noise of an FM discriminator at that ratio explains most of the remaining difference to the 37 dB the quantisation
+alone would allow. Played: 196 608 of 211 758 updates. The cause is a second upload bug: the firmware refuses a chunk whose length is not a
+multiple of four, and the host did not look at the reply, so the last 7575 samples were dropped and their bytes were left on the line. `upload()` now pads to
+whole words, checks every reply and refuses data that does not fit the buffer.
+
+## Transmit in the normal firmware, or a separate image?
+
+Measured with `size` on the two images (the receiver `NARROWBAND=1`, the research build `NARROWBAND=1 TXTEST=1`):
+
+| Region | Size | Receiver | With transmit | Left |
+|---|---|---|---|---|
+| core 0 code (`.text`) | 61 440 B (up to the transmit kernel at `0x4038F000`) | 54 198 B | 60 938 B | **502 B** |
+| core 1 code (`.core1_text`) | 28 672 B | 7 806 B | 7 806 B | 20 KB |
+| `.data` (tables, read-only data) | 8 192 B | 6 543 B | 7 263 B | 929 B |
+| `.bss` + stacks | 57 344 B | 57 120 B | 57 296 B | **48 B** |
+
+A combined image would fit only by moving things: the transmit functions can live in the core-1 bank (they run while no capture is running, so
+the cores do not compete for instruction fetches) and the work RAM needs a smaller core-1 stack. Half-duplex operation is no problem
+(`radio_tx_*()` already releases the receiver and sets it up again afterwards), full duplex is not possible (one PLL).
+
+**Recommendation: two images from one source tree** (what `TXTEST=1` does), not one combined image:
+* The receiver image stays free of any transmit code. That is verifiable (the CI builds it unchanged), it is what people who have no licence
+  or no wish to transmit download, and it keeps the memory budget of the decimator, which has 40 % of the CPU time to spare but almost no RAM.
+* Switching costs a few seconds and no flash write: the host loads the transmit image into RAM (`espdr_load.py`, the same step as for the
+  receiver), transmits, and a reset brings back the receiver from flash. A wrapper that does both steps (`espdr_txtest.py --load`) is a small
+  addition; what it needs is both USB cables, as for any load.
+* A combined image remains possible later as a build option (`TX=1` for the receiver plus the transmit ops in the core-1 bank) if there is a
+  reason that outweighs the points above, for example a transmit and receive program that keeps one USB connection open.
 

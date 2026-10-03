@@ -1,0 +1,3 @@
+# Research transmitter tool (espdr_txtest.py): signal preparation
+-r requirements.txt
+scipy>=1.7
