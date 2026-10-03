@@ -93,7 +93,7 @@ def prepare_ssb(source, rate, ms, carrier, delay, drift_hz=210.0, drift_tau=0.9)
         e2 = e1
         e1 = w - u
         dw[i] = w
-    dw = np.clip(dw, -120, 120).astype(np.int8)
+    dw = np.clip(dw, -80, 80).astype(np.int8)        # the low byte of the word must not wrap (base 0x55: -85..+170)
     db = 20 * np.log10(np.maximum(A, 1e-6))                  # 0 dB at the peak
     top = GAIN_CURVE[-1][1]                                  # the peak sits at g = 64
     gcode = np.interp(db + top, [p[1] for p in GAIN_CURVE], [p[0] for p in GAIN_CURVE])

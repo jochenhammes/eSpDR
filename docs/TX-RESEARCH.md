@@ -240,3 +240,29 @@ Open: measure the SSB speech quality (SINAD) with a receiver that follows the ca
 the carrier ratio; continuous streaming instead of a looped 2.4 s buffer; compute the Hilbert transform and the polar conversion on the
 ESP itself.
 
+## Reducing the carrier (measured): true SSB with a suppressed carrier works
+
+Two tones (700 + 1700 Hz, 300 ms), `prepare_ssb()` with the carrier ratio `c` (the carrier as a fraction of the peak envelope), the
+envelope reaches down to the nulls of `c + x_a` which are far beyond the 17.9 dB the gain code covers; the code simply stays at 127 for
+3 to 10 % of the updates (the word delta is limited to +-80 steps, the low byte of the word must not wrap). Everything else as before
+(delay 1.0, drift cancelled in the firmware, PlutoSDR at 20 dB):
+
+| carrier ratio | wanted tone against the carrier | unwanted sideband below the wanted tone | IMD3 below the wanted tone |
+|---|---|---|---|
+| 0.55 | +8.0 dB | 29.4 dB | 51 to 54 dB |
+| 0.45 | +3.9 dB | 33.8 dB | 41 to 42 dB |
+| 0.35 | +0.4 dB | 42.0 dB | 40 to 45 dB |
+| 0.25 | +3.6 dB | 47.0 dB | 36 dB |
+| 0.15 | +8.7 dB | 54 to 55 dB | 35 dB |
+| 0.10 | +12.1 dB | 55 to 62 dB | 33 to 34 dB |
+| 0.05 | +19.3 dB | 58 to 61 dB | 33 to 35 dB |
+| **0.00** | +41.4 dB (carrier leakage) | **61 to 63 dB** | 33 to 34 dB |
+
+So the carrier can go away completely: a carrier leakage 41 dB below each tone, the unwanted sideband beyond 60 dB, third-order
+intermodulation 33 to 35 dB below the tones, which is the quality of a plain amateur SSB transceiver. The IMD3 grows from -52 dB to -34 dB as the
+carrier shrinks (the envelope passes through zero) and then stays there; the unwanted sideband improves.
+
+**Speech with 5 % carrier** (`--carrier 0.05`, 19.2 s looped): averaged over 7 s the energy sits 300 to 3000 Hz above the carrier, with the voice
+fundamental at 513.0 to 513.2 kHz at -70 dB; the mirror region (0.3 to 0.7 kHz below the carrier) is at -97 dB, at least 27 dB lower and
+limited by the noise floor of the measurement (the two-tone result above is the better figure).
+
