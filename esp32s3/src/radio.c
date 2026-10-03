@@ -757,4 +757,63 @@ unsigned radio_tx_audio(uint32_t lo_khz, unsigned g, uint32_t dev_hz, uint32_t r
     receiver.status = reconfigure(true);
     return receiver.status == ESP_RADIO_OK ? status : CTL_FAILED;
 }
+
+#define TX_FRONTEND_I_REG (*(volatile uint32_t *)0x60006040u)
+
+static inline void tx_set_gain(unsigned g)
+{
+    TX_FRONTEND_I_REG = (TX_FRONTEND_I_REG & ~(0xFFu << 10)) | (((0u - g) & 0xFFu) << 10);
+}
+
+unsigned radio_tx_gain(uint32_t lo_khz, unsigned mode, unsigned a, unsigned b, int c, unsigned d, uint32_t *info)
+{
+    if (lo_khz < TX_MIN_KHZ || lo_khz > TX_MAX_KHZ || a < TX_GAIN_MIN_G || a > 255 || b < TX_GAIN_MIN_G || b > 255 || mode > 1 ||
+        d == 0 || d > 2000 || c == 0 || (mode == 0 && (c > 128 || c < -128)) || (mode == 1 && (c < 0 || c > 40000)))
+        return CTL_BAD_ARGUMENT;
+    if (mode == 0 && ((c > 0 && a > b) || (c < 0 && a < b) || (unsigned)(b > a ? b - a : a - b) / (unsigned)(c < 0 ? -c : c) * d > 4000))
+        return CTL_BAD_ARGUMENT;
+    if (receiver.status != ESP_RADIO_OK)
+        return CTL_NOT_READY;
+    unsigned status = CTL_OK;
+    uint32_t writes = 0;
+    if (!release_receiver() || !tune_pll(lo_khz * 1000u)) {
+        status = CTL_FAILED;
+    } else {
+        txcal_debuge_mode();
+        if (!tune_pll(lo_khz * 1000u)) {
+            status = CTL_FAILED;
+        } else {
+            start_tx_tone_step(1, 0, (int)TX_GAIN_MIN_G, 0, 0, 0);
+            delay_us(20000);
+            if (mode == 0) {
+                for (int g = (int)a;; g += c) {
+                    if ((c > 0 && g > (int)b) || (c < 0 && g < (int)b))
+                        break;
+                    tx_set_gain((unsigned)g);
+                    writes++;
+                    delay_us(d * 1000u);
+                }
+            } else {
+                uint32_t half = 240000000u / (2u * (uint32_t)c), end = cpu_cycles() + d * 240000u, next = cpu_cycles() + half;
+                unsigned g = a;
+                tx_set_gain(g);
+                writes++;
+                while ((int32_t)(end - cpu_cycles()) > 0) {
+                    while ((int32_t)(cpu_cycles() - next) < 0)
+                        ;
+                    next += half;
+                    g = g == a ? b : a;
+                    tx_set_gain(g);
+                    writes++;
+                }
+            }
+            delay_us(20000);
+            start_tx_tone_step(0, 0, 0, 0, 0, 0);
+        }
+        txcal_work_mode();
+    }
+    *info = writes;
+    receiver.status = reconfigure(true);
+    return receiver.status == ESP_RADIO_OK ? status : CTL_FAILED;
+}
 #endif

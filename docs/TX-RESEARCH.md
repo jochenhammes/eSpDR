@@ -120,3 +120,32 @@ come from the word's step size (458 Hz) and the first-order shaping; a finer ste
 
 ![demodulated FM tone](images/tx-fm-audio.png)
 
+## SSB stage A1: the gain field as an amplitude control (measured, the premise did not hold)
+
+Plan: amplitude through bits 17:10 of `0x60006040` (`(-g) & 0xFF`), written directly, so that SSB can be built as polar modulation
+(amplitude by the gain field, phase by the PLL word). `radio_tx_gain()` starts the carrier as in stage 2 with g = 127, waits 20 ms, then
+writes the field alone: a ladder g = 127, 135, ..., 255 (field 129, 121, ..., 1), 25 ms per step, PlutoSDR 20 dB at 50 cm.
+
+| g (field) | amplitude [e-3] | against g = 127 |
+|---|---|---|
+| 127 (129) | 2.56 | 0 dB |
+| 135 (121) | 24.9 | **+19.8 dB** |
+| 143 (113) | 25.8 | +20.1 |
+| 175 (81) | 24.7 | +19.7 |
+| 207 (49) | 22.9 | +19.0 |
+| 255 (1) | 22.0 | +18.7 |
+
+* Writing a smaller field value **raised** the carrier by 20 dB, then it stays on a plateau that falls by only 1.4 dB across 112 codes
+  (about 0.012 dB per code), against 0.27 dB per code between g = 120 and 127 (stage 2). Seen as a signed byte, the field is negative
+  (-127..-120) in the weak state and positive (+1..+121) on the plateau: bit 7 of the field looks like a ~20 dB switch, the low bits
+  a weak fine control. Not established.
+* The carrier at the nominal g = 127 was 2.5e-3 in this run; earlier runs gave 2.3e-3 to 9.3e-3 at the same Pluto setting. The level at a
+  given g varies by about 10 dB from run to run. The PHY's own CW test compensates with a runtime value (`g = max(attenuation - REG(0x60006004) + 40, 0)`),
+  which our bring-up does not set up.
+* The plateau (25e-3 at the Pluto's 20 dB, i.e. about 9 dB above the earlier tests) is the strongest carrier seen so far, still in the
+  microwatt range (about -26 dBm radiated, +-10 dB). The assumption "g >= 127 is never stronger than before" was wrong.
+
+Conclusion for SSB: the gain field is a coarse 20 dB step plus a weak slope, not a smooth amplitude control; the run-to-run level
+differences make it worse. Open: other amplitude controls (field `a` in bits 25:18: 0 / 1 / 2 gave off / on / -20 dB; the PHY's power
+backoff `target_power_backoff`, the `0x60006000` power field in bits 17:10, the digital TX gain `rom_set_tx_dig_gain`).
+

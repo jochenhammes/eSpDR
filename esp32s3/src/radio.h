@@ -52,6 +52,17 @@ unsigned radio_tx_test(uint32_t lo_khz, unsigned g, unsigned ms, uint32_t *info)
 #define TX_MAX_STATES 16u
 
 /*
+ * Stage A of the SSB plan: the carrier's gain field alone. Bits 17:10 of the frontend register 0x60006040 hold (-g) & 0xFF (smaller g
+ * = stronger); start_tx_tone_step() sets it, and here it is rewritten directly (read-modify-write of that field only). Never stronger
+ * than g = TX_GAIN_MIN_G, the level of every test so far.
+ *   mode 0 ladder: g runs from `a` to `b` in steps of `c` (signed), each held `d` ms.
+ *   mode 1 square: g alternates between `a` and `b`, c times a second, for d ms in total.
+ * *info receives the number of gain writes.
+ */
+#define TX_GAIN_MIN_G 127u
+unsigned radio_tx_gain(uint32_t lo_khz, unsigned mode, unsigned a, unsigned b, int c, unsigned d, uint32_t *info);
+
+/*
  * Frequency modulation by recorded audio: the signed 8-bit samples at buf[0..n) (full scale 127 = dev_hz deviation) are played once at
  * rate_hz through the same PLL-word update as radio_tx_fm(). The audio sits in the unused capture banks 0..2 (TX_AUDIO_BASE), the
  * host fills it first. The samples are `up` (1 or 2) times fewer than the updates: with 2 each one is linearly interpolated.

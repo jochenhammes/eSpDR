@@ -288,6 +288,8 @@ static uint8_t execute(uint8_t op, uint32_t arg, uint32_t *value)
     case 73: /* RESEARCH: play the audio as FM: update rate = NCO rate Hz, deviation (full scale) = NCO amplitude Hz, up = NCO offset (1/2) */
         return radio_tx_audio(arg & 0x3FFFFFu, arg >> 22, tx_nco_amp, tx_nco_rate, tx_nco_hz, (const int8_t *)TX_AUDIO_BASE,
                               tx_audio_len, value);
+    case 74: /* RESEARCH (SSB stage A): gain field; arg = lo kHz | mode << 22 | a << 24; b = NCO amp, c = NCO rate (signed), d = NCO Hz */
+        return radio_tx_gain(arg & 0x3FFFFFu, (arg >> 22) & 3u, arg >> 24, tx_nco_amp, (int32_t)tx_nco_rate, tx_nco_hz, value);
     case 65: /* RESEARCH: like 61 but moving the carrier with the NCO */
         return radio_tx_nco(arg & 0x3FFFFFu, arg >> 22, tx_test_ms, tx_nco_hz, tx_nco_rate, tx_nco_amp, value);
     case 61: /* RESEARCH: carrier at (arg & 0x3FFFFF) kHz with test gain (arg >> 22) */

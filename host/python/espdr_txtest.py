@@ -15,6 +15,7 @@ import espdr_nb as nb
 OP_DURATION, OP_CARRIER, OP_NCO_HZ, OP_NCO_RATE, OP_NCO_AMP, OP_NCO = 60, 61, 62, 63, 64, 65
 OP_LADDER_CLEAR, OP_LADDER_ADD, OP_LADDER_RUN, OP_FSK, OP_FM = 66, 67, 68, 69, 70
 OP_AUDIO_DATA, OP_AUDIO_CLEAR, OP_AUDIO_PLAY = 71, 72, 73
+OP_GAIN = 74
 
 
 def prepare_audio(path, rate):
@@ -48,6 +49,8 @@ def main():
     ap.add_argument("--nco-hz", type=int, help="move the carrier with an I/Q oscillator at this offset (stage 3 experiment)")
     ap.add_argument("--ladder", help="static register states 'a,i,b,q;a,i,b,q;...' (a,b 0..63, i,q -512..511), each held --hold ms")
     ap.add_argument("--fsk-dev", type=int, help="FSK through the PLL word: deviation in Hz (<= 20000); --rate is then the toggle rate in Hz (<= 5000)")
+    ap.add_argument("--gain-ladder", help="SSB stage A1: 'A,B,STEP,HOLDMS': the carrier's gain code g runs from A to B (>= 127; larger = weaker)")
+    ap.add_argument("--gain-square", help="SSB stage A2: 'A,B,RATE,MS': g alternates between A and B, RATE times a second, for MS ms")
     ap.add_argument("--audio", help="speech sender: FM-modulate this WAV file (mono-mixed, band-limited, pre-emphasised, clipped); --fm-dev is the full-scale deviation, --rate the update rate")
     ap.add_argument("--save-processed", help="with --audio: write the processed int8 samples here (for comparing with a recording)")
     ap.add_argument("--fm-tone", type=int, help="FM by a sine tone of this frequency in Hz; --fm-dev is the deviation, --rate the PLL word update rate")
@@ -64,7 +67,16 @@ def main():
     link = nb.open_link(args.port)
     nb.check_firmware(link)
     link.command(OP_DURATION, args.ms)
-    if args.audio:
+    if args.gain_ladder or args.gain_square:
+        mode = 0 if args.gain_ladder else 1
+        a, b, c, d = (int(v) for v in (args.gain_ladder or args.gain_square).split(","))
+        link.command(OP_NCO_AMP, b)
+        link.command(OP_NCO_RATE, c & 0xFFFFFFFF)
+        link.command(OP_NCO_HZ, d)
+        link.send(OP_GAIN, args.freq_khz | mode << 22 | a << 24)
+        status, writes = link._response(OP_GAIN, timeout=(d * (abs(b - a) // max(abs(c), 1) + 1) / 1000 if mode == 0 else d / 1000) + 8)
+        print(f"status {status} ({'ok' if status == 0 else 'failed'}); gain writes: {writes}")
+    elif args.audio:
         up = 2 if args.rate > 20000 else 1
         samples = prepare_audio(args.audio, args.rate // up)
         if args.save_processed:
