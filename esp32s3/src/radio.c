@@ -504,7 +504,7 @@ static uint32_t sdm_readback(void)
  */
 unsigned radio_tx_test(uint32_t lo_khz, unsigned g, unsigned ms, uint32_t *info)
 {
-    if (lo_khz < TX_MIN_KHZ || lo_khz > TX_MAX_KHZ || g < TX_MIN_G || g > 127 || ms == 0 || ms > 5000)
+    if (lo_khz < TX_MIN_KHZ || lo_khz > TX_MAX_KHZ || g < TX_MIN_G || g > 127 || ms == 0 || ms > 30000)
         return CTL_BAD_ARGUMENT;
     if (receiver.status != ESP_RADIO_OK)
         return CTL_NOT_READY;
@@ -518,7 +518,8 @@ unsigned radio_tx_test(uint32_t lo_khz, unsigned g, unsigned ms, uint32_t *info)
         } else {
             start_tx_tone_step(1, 0, (int)g, 0, 0, 0);
             *info = sdm_readback();
-            delay_us(ms * 1000u);
+            for (unsigned t = 0; t < ms; t += 1000) /* delay_us() counts CPU cycles in 32 bits: at most 17 s at a time */
+                delay_us((ms - t < 1000 ? ms - t : 1000) * 1000u);
             start_tx_tone_step(0, 0, 0, 0, 0, 0);
         }
         txcal_work_mode();
@@ -893,11 +894,13 @@ unsigned radio_tx_backoff(uint32_t lo_khz, unsigned g, int b0, int b1, int step,
     return receiver.status == ESP_RADIO_OK ? status : CTL_FAILED;
 }
 
-unsigned radio_tx_ssb(uint32_t lo_khz, uint32_t rate_hz, const uint8_t *buf, uint32_t n, uint32_t *info)
+unsigned radio_tx_ssb(uint32_t lo_khz, uint32_t rate_hz, const uint8_t *buf, uint32_t n, unsigned loops, int drift_hz,
+                      uint32_t *info)
 {
     struct esp32s3_lo_plan p0;
     if (lo_khz < TX_MIN_KHZ || lo_khz > TX_MAX_KHZ || n == 0 || n * 2u > TX_AUDIO_MAX || rate_hz < 8000 || rate_hz > 40000 ||
-        (uint64_t)n * 1000u > (uint64_t)rate_hz * 5000u || !esp32s3_plan_lo(lo_khz * 1000u, ESP32S3_LO_NORMAL, &p0))
+        loops == 0 || loops > 30 || (uint64_t)n * loops * 1000u > (uint64_t)rate_hz * 30000u || drift_hz < -2000 || drift_hz > 2000 ||
+        !esp32s3_plan_lo(lo_khz * 1000u, ESP32S3_LO_NORMAL, &p0))
         return CTL_BAD_ARGUMENT;
     uint32_t base = p0.sdm_word & 0xFF;
     if (base < 40 || base > 215)
@@ -914,20 +917,31 @@ unsigned radio_tx_ssb(uint32_t lo_khz, uint32_t rate_hz, const uint8_t *buf, uin
             status = CTL_FAILED;
         } else {
             uint32_t period = 240000000u / rate_hz;
+            /* drift correction in word steps, Q24: c = -drift_hz / 458.8 Hz, decaying by 1/32768 per update */
+            int32_t c = (int32_t)(-((int64_t)drift_hz << 24) * 65536 / 30000000), cacc = 0;
             start_tx_tone_step(1, 0, 127, 0, 0, 0);
             delay_us(20000);
+            /* the correction has been running for the 20 ms of carrier */
+            for (uint32_t i = 0; i < rate_hz / 50u; i++)
+                c -= c >> 15;
             uint32_t next = cpu_cycles() + period;
-            for (uint32_t k = 0; k < n; k++) {
-                int32_t dw = tx_byte(buf, 2u * k, 1);
-                unsigned g = (unsigned)tx_byte(buf, 2u * k + 1, 0);
-                g = g < 64 ? 64 : g > 127 ? 127 : g;
-                if ((int32_t)(cpu_cycles() - next) > 0)
-                    late++;
-                while ((int32_t)(cpu_cycles() - next) < 0)
-                    ;
-                tx_set_gain(g);
-                analog_write(I2C_SDM, 5, (uint8_t)((int32_t)base + dw));
-                next += period;
+            for (unsigned pass = 0; pass < loops; pass++) {
+                for (uint32_t k = 0; k < n; k++) {
+                    int32_t dw = tx_byte(buf, 2u * k, 1);
+                    unsigned g = (unsigned)tx_byte(buf, 2u * k + 1, 0);
+                    g = g < 64 ? 64 : g > 127 ? 127 : g;
+                    cacc += c;
+                    int32_t wc = (cacc + (1 << 23)) >> 24;
+                    cacc -= wc << 24;
+                    c -= c >> 15;
+                    if ((int32_t)(cpu_cycles() - next) > 0)
+                        late++;
+                    while ((int32_t)(cpu_cycles() - next) < 0)
+                        ;
+                    tx_set_gain(g);
+                    analog_write(I2C_SDM, 5, (uint8_t)((int32_t)base + dw + wc));
+                    next += period;
+                }
             }
             analog_write(I2C_SDM, 5, (uint8_t)base);
             delay_us(20000);

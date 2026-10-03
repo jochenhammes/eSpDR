@@ -74,9 +74,14 @@ unsigned radio_tx_backoff(uint32_t lo_khz, unsigned g, int b0, int b1, int step,
 /*
  * SSB by polar modulation: n updates of two bytes each at TX_AUDIO_BASE, played at rate_hz: a signed word delta (in 458.8 Hz steps, the
  * host has done the noise shaping) and a gain code g (clamped to 64..127, the smooth weak branch of the gain field). The carrier
- * starts at g = 127 with 20 ms of plain carrier. *info receives the number of updates that were late.
+ * starts at g = 127 with 20 ms of plain carrier.
+ * (see also loops and drift_hz below) *info receives the number of updates that were late.
  */
-unsigned radio_tx_ssb(uint32_t lo_khz, uint32_t rate_hz, const uint8_t *buf, uint32_t n, uint32_t *info);
+unsigned radio_tx_ssb(uint32_t lo_khz, uint32_t rate_hz, const uint8_t *buf, uint32_t n, unsigned loops, int drift_hz,
+                      uint32_t *info);
+/* loops: the buffer is played that many times in a row (<= 30 s in all). drift_hz: a thermal frequency drift to cancel, decaying with the
+ * time constant 32768 / rate_hz seconds from switch-on (0.82 s at 40 kHz); the correction is added to the word deltas here, once, so that
+ * looped passes do not repeat it. */
 
 /*
  * Frequency modulation by recorded audio: the signed 8-bit samples at buf[0..n) (full scale 127 = dev_hz deviation) are played once at

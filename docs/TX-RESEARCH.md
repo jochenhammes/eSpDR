@@ -211,3 +211,32 @@ therefore scrambles the waveform (correlation with the reference only 0.07, SINA
 stage pulling the PLL, or drift in the PLL's own VCO with temperature after the transmitter is switched on. To measure with an unmodulated
 carrier of 3 s and, if it is repeatable, to cancel it with a slow ramp of the PLL word in the host preparation.
 
+## Thermal drift of the transmitter and a 19 s SSB speech transmission (measured)
+
+**Drift of an unmodulated carrier** (g = 90, 28 s, PlutoSDR; the first attempt stopped after 10.1 s because `delay_us()` counts CPU cycles in 32
+bits and wraps beyond 17.9 s; fixed by waiting in steps of one second). The carrier frequency falls, quickly at first and slowly afterwards, and the
+carrier amplitude rises (a gain drift of the transmitter, about +3 dB):
+
+| Interval after switch-on | Change of the carrier frequency |
+|---|---|
+| 0.3 s to 5 s | **-194 Hz** (about 120 Hz/s at the start) |
+| 5 s to 10 s | -13 Hz |
+| 10 s to 20 s | -35 Hz |
+| 20 s to 27 s | -15 Hz |
+
+Two time scales: about 0.9 s for the first 200 Hz, and a slow one (about 2 to 3 Hz per second) that is still running after 25 s. Repeatable
+from run to run to about 20 Hz. Within the first 5 s the drift is almost over; after that it is irrelevant for speech.
+
+**Compensation.** The firmware cancels the fast part itself (`radio_tx_ssb()`, parameter `drift_hz` = +210 Hz, decay of 1/32768 per update =
+0.82 s at 40 kHz), by adding a second-order-free first-order-shaped correction to the word deltas, once, so that looped passes do not repeat it.
+
+**19.2 s of SSB speech** (`da2jh-test.wav`, the first 2.4 s played 8 times in a row, USB, carrier ratio 0.55, 40 kHz updates, delay 1.0,
+drift 210 Hz): 96 000 x 8 updates, none late. The carrier stays within +-20 Hz of its mean (-198 ... -160 Hz against the reference), the level of
+the speech sideband against the carrier is the same in every pass (-22.1 and -14.0 dB at the two measuring points), the amplitude of
+carrier and speech together falls by 3.5 dB across the transmission (the gain drift above). Heard live on a second computer (HackRF, SDR++ with a USB
+demodulator): **the speech is understood**.
+
+Open: measure the SSB speech quality (SINAD) with a receiver that follows the carrier; repeat the FM speech with the fixed upload; reduce
+the carrier ratio; continuous streaming instead of a looped 2.4 s buffer; compute the Hilbert transform and the polar conversion on the
+ESP itself.
+

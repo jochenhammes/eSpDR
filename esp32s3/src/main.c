@@ -241,7 +241,7 @@ static uint8_t execute(uint8_t op, uint32_t arg, uint32_t *value)
     case 60: /* RESEARCH: duration of the test carrier, ms (default 500) */
         tx_test_ms = arg;
         *value = arg;
-        return arg >= 1 && arg <= 5000 ? CTL_OK : CTL_BAD_ARGUMENT;
+        return arg >= 1 && arg <= 30000 ? CTL_OK : CTL_BAD_ARGUMENT;
     case 62: /* RESEARCH: NCO offset Hz */
         tx_nco_hz = arg;
         return CTL_OK;
@@ -301,7 +301,8 @@ static uint8_t execute(uint8_t op, uint32_t arg, uint32_t *value)
         *value = ((((const volatile uint32_t *)TX_AUDIO_BASE)[arg / 4u] >> (8 * (arg & 3u))) & 0xFFu) | (tx_audio_len << 8);
         return CTL_OK;
     case 78: /* RESEARCH: play the uploaded (word delta, gain code) pairs as SSB; rate = NCO rate Hz; arg = lo kHz */
-        return radio_tx_ssb(arg & 0x3FFFFFu, tx_nco_rate, (const uint8_t *)TX_AUDIO_BASE, tx_audio_len / 2u, value);
+        return radio_tx_ssb(arg & 0x3FFFFFu, tx_nco_rate, (const uint8_t *)TX_AUDIO_BASE, tx_audio_len / 2u, tx_nco_hz,
+                            (int32_t)tx_nco_amp, value);
     case 75: /* RESEARCH: dump the frontend registers; arg = lo kHz | g << 22 */
         return radio_tx_regs(arg & 0x3FFFFFu, arg >> 22, value);
     case 76: /* RESEARCH: read one word of the dump */

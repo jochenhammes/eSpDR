@@ -46,7 +46,7 @@ GAIN_CURVE = [(127, 0.0), (124, 1.32), (121, 1.94), (118, 2.79), (115, 3.82), (1
               (73, 15.51), (70, 16.33), (67, 17.12), (64, 17.90)]
 
 
-def prepare_ssb(source, rate, ms, carrier, delay):
+def prepare_ssb(source, rate, ms, carrier, delay, drift_hz=210.0, drift_tau=0.9):
     """(data, reference): interleaved (word delta int8, gain code uint8) per update at `rate`, for USB polar modulation with a
     carrier: z = c + analytic(audio); amplitude |z| through the gain field, frequency d(arg z)/dt through the PLL word."""
     import numpy as np
@@ -81,6 +81,9 @@ def prepare_ssb(source, rate, ms, carrier, delay):
     A = Af[::10]; A = A / A.max()
     phi = np.unwrap(np.angle(z))
     f = np.diff(phi, prepend=phi[0]) * rate / (2 * np.pi)   # Hz
+    # thermal drift of the transmitter after switch-on (measured: -190 Hz in 2.5 s, time constant 0.9 s, repeatable): cancel it
+    tsec = np.arange(len(f)) / rate + 0.02            # the carrier has been on for 20 ms when the first update arrives
+    f = f - drift_hz * np.exp(-tsec / drift_tau)
     STEP = 30e6 / 65536
     e1 = e2 = 0.0
     dw = np.zeros(len(f), dtype=np.int64)
@@ -112,6 +115,8 @@ def main():
     ap.add_argument("--fsk-dev", type=int, help="FSK through the PLL word: deviation in Hz (<= 20000); --rate is then the toggle rate in Hz (<= 5000)")
     ap.add_argument("--ssb", help="SSB (USB) by polar modulation: a WAV file, or 'twotone:700,1700' (Hz), for the length --ms (<= 2400)")
     ap.add_argument("--carrier", type=float, default=0.55, help="with --ssb: carrier amplitude as a fraction of the peak envelope (0.3..0.8)")
+    ap.add_argument("--drift-hz", type=float, default=210.0, help="with --ssb: initial thermal frequency drift to cancel (0 = off); done in the firmware, time constant 32768/rate")
+    ap.add_argument("--loops", type=int, default=1, help="with --ssb: play the prepared clip this many times in a row (total <= 30 s)")
     ap.add_argument("--force-g", type=int, help="with --ssb: debugging, send this gain code at every update (and no word deltas)")
     ap.add_argument("--ssb-delay", type=float, default=1.0, help="with --ssb: delay of the gain path against the frequency path, in updates (can be negative)")
     ap.add_argument("--dump-regs", action="store_true", help="SSB stage A: carrier on for 50 ms, print the frontend registers 0x60006000..0x60006060")
@@ -135,7 +140,7 @@ def main():
     nb.check_firmware(link)
     link.command(OP_DURATION, args.ms)
     if args.ssb:
-        data, ref = prepare_ssb(args.ssb, args.rate or 40000, args.ms, args.carrier, args.ssb_delay)
+        data, ref = prepare_ssb(args.ssb, args.rate or 40000, args.ms, args.carrier, args.ssb_delay, 0.0)
         if args.force_g:
             data[1::2] = args.force_g
             data[0::2] = 0
@@ -148,9 +153,12 @@ def main():
             link.ser.write(chunk)
             link._response(OP_AUDIO_DATA, timeout=10)
         link.command(OP_NCO_RATE, args.rate or 40000)
+        link.command(OP_NCO_HZ, args.loops)
+        link.command(OP_NCO_AMP, int(round(args.drift_hz)) & 0xFFFFFFFF)
         link.send(OP_SSB, args.freq_khz)
-        status, late = link._response(OP_SSB, timeout=len(data) / 2 / (args.rate or 40000) + 8)
-        print(f"status {status} ({'ok' if status == 0 else 'failed'}); updates: {len(data) // 2} ({len(data) / 2 / (args.rate or 40000):.2f} s), late: {late}")
+        secs = len(data) / 2 / (args.rate or 40000) * args.loops
+        status, late = link._response(OP_SSB, timeout=secs + 8)
+        print(f"status {status} ({'ok' if status == 0 else 'failed'}); updates: {len(data) // 2} x {args.loops} loops ({secs:.2f} s), late: {late}")
     elif args.dump_regs:
         link.send(OP_REGS, args.freq_khz | args.g << 22)
         status, w16 = link._response(OP_REGS, timeout=8)
