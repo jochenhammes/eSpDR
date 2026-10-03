@@ -52,6 +52,14 @@ unsigned radio_tx_test(uint32_t lo_khz, unsigned g, unsigned ms, uint32_t *info)
 #define TX_MAX_STATES 16u
 
 /*
+ * Frequency modulation by a sine tone: the PLL word follows dev_hz * sin(2 pi tone_hz t), updated rate_hz times per second
+ * (<= 40000) with first-order error feedback (the word is 457.8 Hz per step, so plain rounding would be coarse). Only the low
+ * byte of the word is written, so the swing must stay inside it; dev_hz <= 20000. *info receives the number of updates.
+ */
+unsigned radio_tx_fm(uint32_t lo_khz, unsigned g, unsigned ms, uint32_t tone_hz, uint32_t dev_hz, uint32_t rate_hz,
+                     uint32_t *info);
+
+/*
  * Frequency-shift keying through the PLL's sigma-delta word: the carrier of radio_tx_test() jumps between lo_khz and lo_khz +
  * dev_hz (<= 20 kHz) toggle_hz times per second (<= 5000), for ms. The word is 30 MHz / 65536 = 457.8 Hz per step. *info
  * receives the number of word updates; status as above. fast: write only the low byte of the word (no bracket).

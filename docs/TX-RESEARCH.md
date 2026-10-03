@@ -101,3 +101,22 @@ constant within a run.
 
 ![FSK received with a PlutoSDR](images/tx-fsk-spectrum.png)
 
+### Stage 3, test 9: audio FM (measured)
+
+`radio_tx_fm()`: the low byte of the PLL word follows `dev * sin(2 pi f t)` with first-order error feedback (the word steps are 457.8 Hz),
+updated 20 000 times a second; 1 kHz tone, +-3 kHz commanded deviation, 500 ms, `g = 127`. Demodulated from the PlutoSDR recording
+(20 dB gain, 25 kHz filter, 100 ksps phase derivative):
+
+| | |
+|---|---|
+| Deviation | 2905 Hz peak (commanded 3000) |
+| Carrier | 8.5e-3 rms, 5th..95th percentile 7.9..9.1e-3 (+-0.6 dB), no dropout in 46 000 samples |
+| Voice band 0.3-3.4 kHz | tone against noise and distortion: **SINAD 31.8 dB** |
+| Harmonics 2..5 | -37, -39, -32, -36 dB |
+| Noise 5..25 kHz | -18 dB re the tone (shaped by the error feedback; a narrow receiver filter removes most of it) |
+
+Conclusion so far: **narrowband FM with an ESP32-S3 as the only RF hardware works**: 31.8 dB SINAD is telephone-quality voice. The limits
+come from the word's step size (458 Hz) and the first-order shaping; a finer step or a second-order feedback would help.
+
+![demodulated FM tone](images/tx-fm-audio.png)
+

@@ -654,4 +654,55 @@ unsigned radio_tx_fsk(uint32_t lo_khz, unsigned g, unsigned ms, uint32_t dev_hz,
     receiver.status = reconfigure(true);
     return receiver.status == ESP_RADIO_OK ? status : CTL_FAILED;
 }
+
+unsigned radio_tx_fm(uint32_t lo_khz, unsigned g, unsigned ms, uint32_t tone_hz, uint32_t dev_hz, uint32_t rate_hz,
+                     uint32_t *info)
+{
+    struct esp32s3_lo_plan p0;
+    if (lo_khz < TX_MIN_KHZ || lo_khz + dev_hz / 1000u + 1 > TX_MAX_KHZ || g < TX_MIN_G || g > 127 || ms == 0 || ms > 2000 ||
+        dev_hz == 0 || dev_hz > 20000 || rate_hz < 2000 || rate_hz > 40000 || tone_hz == 0 || tone_hz * 4 > rate_hz ||
+        !esp32s3_plan_lo(lo_khz * 1000u, ESP32S3_LO_NORMAL, &p0))
+        return CTL_BAD_ARGUMENT;
+    /* the swing in word steps (Q16) must fit into the low byte around the base word */
+    uint32_t steps_q16 = (uint32_t)(((uint64_t)dev_hz << 16) * 65536u / 30000000u); /* dev / (30 MHz / 65536), Q16 */
+    unsigned steps = (steps_q16 >> 16) + 2;
+    if ((p0.sdm_word & 0xFF) < steps || (p0.sdm_word & 0xFF) > 255 - steps)
+        return CTL_BAD_ARGUMENT;
+    if (receiver.status != ESP_RADIO_OK)
+        return CTL_NOT_READY;
+    unsigned status = CTL_OK;
+    uint32_t updates = 0;
+    if (!release_receiver() || !tune_pll(lo_khz * 1000u)) {
+        status = CTL_FAILED;
+    } else {
+        txcal_debuge_mode();
+        if (!tune_pll(lo_khz * 1000u)) {
+            status = CTL_FAILED;
+        } else {
+            uint32_t step = (uint32_t)(((uint64_t)tone_hz << 32) / rate_hz), phase = 0;
+            uint32_t period = 240000000u / rate_hz, total = (uint32_t)((uint64_t)ms * rate_hz / 1000u);
+            int32_t err = 0;
+            start_tx_tone_step(1, 0, (int)g, 0, 0, 0);
+            uint32_t next = cpu_cycles() + period;
+            for (uint32_t k = 0; k < total; k++) {
+                int32_t target = (int32_t)(((int64_t)tx_sin[(phase >> 24) & 255] * (int64_t)steps_q16) >> 15); /* Q16 steps */
+                err += target;
+                int32_t w = (err + 0x8000) >> 16;
+                err -= w * 65536;
+                analog_write(I2C_SDM, 5, (uint8_t)((int32_t)(p0.sdm_word & 0xFF) + w));
+                updates++;
+                phase += step;
+                while ((int32_t)(cpu_cycles() - next) < 0)
+                    ;
+                next += period;
+            }
+            analog_write(I2C_SDM, 5, (uint8_t)p0.sdm_word);
+            start_tx_tone_step(0, 0, 0, 0, 0, 0);
+        }
+        txcal_work_mode();
+    }
+    *info = updates;
+    receiver.status = reconfigure(true);
+    return receiver.status == ESP_RADIO_OK ? status : CTL_FAILED;
+}
 #endif
