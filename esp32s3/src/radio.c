@@ -609,7 +609,8 @@ static void sdm_write(uint32_t word)
     analog_write(I2C_SDM, 0, 0x17);
 }
 
-unsigned radio_tx_fsk(uint32_t lo_khz, unsigned g, unsigned ms, uint32_t dev_hz, uint32_t toggle_hz, uint32_t *info)
+unsigned radio_tx_fsk(uint32_t lo_khz, unsigned g, unsigned ms, uint32_t dev_hz, uint32_t toggle_hz, unsigned fast,
+                      uint32_t *info)
 {
     struct esp32s3_lo_plan p0, p1;
     if (lo_khz < TX_MIN_KHZ || lo_khz + dev_hz / 1000u + 1 > TX_MAX_KHZ || g < TX_MIN_G || g > 127 || ms == 0 || ms > 2000 ||
@@ -628,9 +629,17 @@ unsigned radio_tx_fsk(uint32_t lo_khz, unsigned g, unsigned ms, uint32_t dev_hz,
             status = CTL_FAILED;
         } else {
             start_tx_tone_step(1, 0, (int)g, 0, 0, 0);
+            /* fast: only the low byte of the word is written, one register access and no bracket; valid while the two words
+             * differ in that byte only (a deviation below 117 kHz that does not cross a 256-step boundary) */
+            if (fast && (p0.sdm_word >> 8) != (p1.sdm_word >> 8))
+                fast = 0;
             uint32_t half = 120000000u / toggle_hz, next = cpu_cycles() + half, total = (uint32_t)((uint64_t)ms * toggle_hz * 2 / 1000u);
             for (uint32_t k = 0; k < total; k++) {
-                sdm_write((k & 1u) ? p0.sdm_word : p1.sdm_word); /* the first half is the upper frequency */
+                uint32_t word = (k & 1u) ? p0.sdm_word : p1.sdm_word; /* the first half is the upper frequency */
+                if (fast)
+                    analog_write(I2C_SDM, 5, (uint8_t)word);
+                else
+                    sdm_write(word);
                 updates++;
                 while ((int32_t)(cpu_cycles() - next) < 0)
                     ;

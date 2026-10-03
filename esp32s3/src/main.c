@@ -262,7 +262,7 @@ static uint8_t execute(uint8_t op, uint32_t arg, uint32_t *value)
     case 68: /* RESEARCH: run the ladder */
         return radio_tx_ladder(arg & 0x3FFFFFu, arg >> 22, tx_states, tx_states_n, tx_hold_ms, value);
     case 69: /* RESEARCH: FSK through the PLL word, deviation = NCO offset Hz, toggle rate = NCO rate Hz */
-        return radio_tx_fsk(arg & 0x3FFFFFu, arg >> 22, tx_test_ms, tx_nco_hz, tx_nco_rate, value);
+        return radio_tx_fsk(arg & 0x3FFFFFu, arg >> 22, tx_test_ms, tx_nco_hz, tx_nco_rate, tx_nco_amp, value);
     case 65: /* RESEARCH: like 61 but moving the carrier with the NCO */
         return radio_tx_nco(arg & 0x3FFFFFu, arg >> 22, tx_test_ms, tx_nco_hz, tx_nco_rate, tx_nco_amp, value);
     case 61: /* RESEARCH: carrier at (arg & 0x3FFFFF) kHz with test gain (arg >> 22) */

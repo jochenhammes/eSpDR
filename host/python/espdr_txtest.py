@@ -25,6 +25,7 @@ def main():
     ap.add_argument("--nco-hz", type=int, help="move the carrier with an I/Q oscillator at this offset (stage 3 experiment)")
     ap.add_argument("--ladder", help="static register states 'a,i,b,q;a,i,b,q;...' (a,b 0..63, i,q -512..511), each held --hold ms")
     ap.add_argument("--fsk-dev", type=int, help="FSK through the PLL word: deviation in Hz (<= 20000); --rate is then the toggle rate in Hz (<= 5000)")
+    ap.add_argument("--fast", action="store_true", help="with --fsk-dev: write only the low byte of the PLL word per update")
     ap.add_argument("--hold", type=int, default=50)
     ap.add_argument("--rate", type=int, default=100000, help="NCO update rate in Hz (1000..1500000)")
     ap.add_argument("--amp", type=int, default=400, help="NCO amplitude (0..1000)")
@@ -39,6 +40,7 @@ def main():
     if args.fsk_dev:
         link.command(OP_NCO_HZ, args.fsk_dev)
         link.command(OP_NCO_RATE, args.rate)
+        link.command(OP_NCO_AMP, 1 if args.fast else 0)
         link.send(OP_FSK, args.freq_khz | args.g << 22)
         status, upd = link._response(OP_FSK, timeout=args.ms / 1000 + 6)
         print(f"status {status} ({'ok' if status == 0 else 'failed'}); PLL word updates: {upd}")
