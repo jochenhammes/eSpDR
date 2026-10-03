@@ -196,3 +196,18 @@ first SSB attempt showed it as a carrier shifted by 31 to 58 kHz (the word delta
 the playback loops read words (`tx_byte()`), and a readback op (79) verifies it. The FM speech result (SINAD 15.7 dB, flat to 1.6 kHz) is therefore
 **not** a limit of the transmitter and must be repeated.
 
+## SSB with speech (measured)
+
+`da2jh-test.wav` (the first 2.4 s: mono, 8 kHz, 300..2700 Hz, normalised), USB with a carrier at 0.55 of the peak, 40 kHz updates, delay 1.0,
+PlutoSDR 20 dB at 50 cm; 96 000 updates, none late. Spectrograms of the reference, of the received baseband and of the product-detector
+audio are in `images/tx-ssb-speech.png`: pitch harmonics, formants and pauses arrive intact, the mirror sideband is visibly weaker
+(unwanted sideband 23.5 dB below the wanted one in the 300..2700 Hz speech band; carrier 5 dB over the speech power).
+
+![SSB speech received](images/tx-ssb-speech.png)
+
+**The carrier drifts down by about 250 Hz during the 2.4 s** (the yellow line in the middle panel). A fixed-frequency product detector
+therefore scrambles the waveform (correlation with the reference only 0.07, SINAD meaningless), whereas a receiver that follows the carrier
+(SDR++ with its carrier tracking, or retuning by hand) hears the speech. Likely causes, not yet separated: warm-up of the transmitter's power
+stage pulling the PLL, or drift in the PLL's own VCO with temperature after the transmitter is switched on. To measure with an unmodulated
+carrier of 3 s and, if it is repeatable, to cancel it with a slow ramp of the PLL word in the host preparation.
+
