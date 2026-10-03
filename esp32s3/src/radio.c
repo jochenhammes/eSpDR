@@ -485,6 +485,7 @@ void coex_pti_print(void) {}
 int64_t esp_timer_get_time(void) { return (int64_t)(timer_ticks() / 16); }
 
 #ifdef ESPDR_TXTEST
+#include "txsin.h"
 /* ---- transmit research (never part of a release) ------------------------------- */
 
 extern void txcal_debuge_mode(void);
@@ -522,6 +523,79 @@ unsigned radio_tx_test(uint32_t lo_khz, unsigned g, unsigned ms, uint32_t *info)
         }
         txcal_work_mode();
     }
+    receiver.status = reconfigure(true);
+    return receiver.status == ESP_RADIO_OK ? status : CTL_FAILED;
+}
+
+unsigned radio_tx_nco(uint32_t lo_khz, unsigned g, unsigned ms, uint32_t offset_hz, uint32_t rate_hz, unsigned amp,
+                      uint32_t *info)
+{
+    if (lo_khz < TX_MIN_KHZ || lo_khz > TX_MAX_KHZ || g < TX_MIN_G || g > 127 || ms == 0 || ms > 2000 ||
+        rate_hz < 1000 || rate_hz > 1500000 || amp > TX_MAX_AMP || offset_hz > rate_hz / 2)
+        return CTL_BAD_ARGUMENT;
+    if (receiver.status != ESP_RADIO_OK)
+        return CTL_NOT_READY;
+    unsigned status = CTL_OK;
+    uint32_t late = 0;
+    if (!release_receiver() || !tune_pll(lo_khz * 1000u)) {
+        status = CTL_FAILED;
+    } else {
+        txcal_debuge_mode();
+        if (!tune_pll(lo_khz * 1000u)) {
+            status = CTL_FAILED;
+        } else {
+            uint32_t step = (uint32_t)(((uint64_t)offset_hz << 32) / rate_hz);
+            uint32_t period = 240000000u / rate_hz, phase = 0;
+            uint32_t total = (uint32_t)((uint64_t)ms * rate_hz / 1000u);
+            start_tx_tone_step(1, 0, (int)g, 0, 0, 0);
+            uint32_t next = cpu_cycles() + period;
+            for (uint32_t k = 0; k < total; k++) {
+                int i = (int)(((int32_t)tx_sin[((phase >> 24) + 64) & 255] * (int32_t)amp) >> 15);
+                int q = (int)(((int32_t)tx_sin[(phase >> 24) & 255] * (int32_t)amp) >> 15);
+                if ((int32_t)(cpu_cycles() - next) > 0)
+                    late++;
+                while ((int32_t)(cpu_cycles() - next) < 0)
+                    ;
+                start_tx_tone_step(1, i, (int)g, 0, q, 0);
+                phase += step;
+                next += period;
+            }
+            start_tx_tone_step(0, 0, 0, 0, 0, 0);
+        }
+        txcal_work_mode();
+    }
+    *info = late;
+    receiver.status = reconfigure(true);
+    return receiver.status == ESP_RADIO_OK ? status : CTL_FAILED;
+}
+
+unsigned radio_tx_ladder(uint32_t lo_khz, unsigned g, const uint32_t *states, unsigned count, unsigned hold_ms,
+                         uint32_t *info)
+{
+    if (lo_khz < TX_MIN_KHZ || lo_khz > TX_MAX_KHZ || g < TX_MIN_G || g > 127 || count == 0 || count > TX_MAX_STATES ||
+        hold_ms == 0 || hold_ms * count > 2000)
+        return CTL_BAD_ARGUMENT;
+    if (receiver.status != ESP_RADIO_OK)
+        return CTL_NOT_READY;
+    unsigned status = CTL_OK, run = 0;
+    if (!release_receiver() || !tune_pll(lo_khz * 1000u)) {
+        status = CTL_FAILED;
+    } else {
+        txcal_debuge_mode();
+        if (!tune_pll(lo_khz * 1000u)) {
+            status = CTL_FAILED;
+        } else {
+            for (unsigned k = 0; k < count; k++, run++) {
+                uint32_t w = states[k];
+                int i = ((int32_t)(w << 10)) >> 22, q = ((int32_t)w) >> 22; /* sign-extended 10-bit fields */
+                start_tx_tone_step((int)(w & 63u), i * 4, (int)g, (int)((w >> 6) & 63u), q * 4, 0);
+                delay_us(hold_ms * 1000u);
+            }
+            start_tx_tone_step(0, 0, 0, 0, 0, 0);
+        }
+        txcal_work_mode();
+    }
+    *info = run;
     receiver.status = reconfigure(true);
     return receiver.status == ESP_RADIO_OK ? status : CTL_FAILED;
 }

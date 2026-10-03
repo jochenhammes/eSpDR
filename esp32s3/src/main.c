@@ -176,6 +176,8 @@ static uint32_t info(unsigned what)
 
 #ifdef ESPDR_TXTEST
 static unsigned tx_test_ms = 500;
+static uint32_t tx_states[16], tx_states_n, tx_hold_ms = 50;
+static uint32_t tx_nco_hz = 20000, tx_nco_rate = 100000, tx_nco_amp = 400;
 #endif
 
 static uint8_t execute(uint8_t op, uint32_t arg, uint32_t *value)
@@ -239,6 +241,28 @@ static uint8_t execute(uint8_t op, uint32_t arg, uint32_t *value)
         tx_test_ms = arg;
         *value = arg;
         return arg >= 1 && arg <= 5000 ? CTL_OK : CTL_BAD_ARGUMENT;
+    case 62: /* RESEARCH: NCO offset Hz */
+        tx_nco_hz = arg;
+        return CTL_OK;
+    case 63: /* RESEARCH: NCO update rate Hz */
+        tx_nco_rate = arg;
+        return CTL_OK;
+    case 64: /* RESEARCH: NCO amplitude */
+        tx_nco_amp = arg;
+        return CTL_OK;
+    case 66: /* RESEARCH: clear the state ladder, hold time per state in ms */
+        tx_states_n = 0;
+        tx_hold_ms = arg;
+        return CTL_OK;
+    case 67: /* RESEARCH: append a state */
+        if (tx_states_n >= TX_MAX_STATES)
+            return CTL_BAD_ARGUMENT;
+        tx_states[tx_states_n++] = arg;
+        return CTL_OK;
+    case 68: /* RESEARCH: run the ladder */
+        return radio_tx_ladder(arg & 0x3FFFFFu, arg >> 22, tx_states, tx_states_n, tx_hold_ms, value);
+    case 65: /* RESEARCH: like 61 but moving the carrier with the NCO */
+        return radio_tx_nco(arg & 0x3FFFFFu, arg >> 22, tx_test_ms, tx_nco_hz, tx_nco_rate, tx_nco_amp, value);
     case 61: /* RESEARCH: carrier at (arg & 0x3FFFFF) kHz with test gain (arg >> 22) */
         return radio_tx_test(arg & 0x3FFFFFu, arg >> 22, tx_test_ms, value);
 #endif

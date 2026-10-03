@@ -36,6 +36,24 @@ uint32_t radio_stat(unsigned index);
 #define TX_MAX_KHZ 2400000u
 #define TX_MIN_G 64u
 unsigned radio_tx_test(uint32_t lo_khz, unsigned g, unsigned ms, uint32_t *info);
+
+/*
+ * Same, but the carrier is moved by writing I = amp*cos, Q = amp*sin of a numerically controlled oscillator at offset_hz
+ * through start_tx_tone_step() at rate_hz (CPU-timed loop; amp <= TX_MAX_AMP). *info receives the number of updates that
+ * could not be written on time; the number written is ms * rate_hz / 1000.
+ */
+#define TX_MAX_AMP 1000u
+
+/*
+ * A ladder of static states for mapping the frontend registers: each state is (a, i, b, q) as in start_tx_tone_step(a, i*4,
+ * g, b, q*4, 0), held for hold_ms. states[n] = a | b << 6 | (i & 0x3FF) << 12 | (q & 0x3FF) << 22 (a, b 0..63, i, q signed
+ * 10 bit). *info receives the number of states run.
+ */
+#define TX_MAX_STATES 16u
+unsigned radio_tx_ladder(uint32_t lo_khz, unsigned g, const uint32_t *states, unsigned count, unsigned hold_ms,
+                         uint32_t *info);
+unsigned radio_tx_nco(uint32_t lo_khz, unsigned g, unsigned ms, uint32_t offset_hz, uint32_t rate_hz, unsigned amp,
+                      uint32_t *info);
 #endif
 
 /* The dump engine's control word for the selected sample rate (not running),
