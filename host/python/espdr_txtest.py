@@ -14,6 +14,29 @@ import espdr_nb as nb
 
 OP_DURATION, OP_CARRIER, OP_NCO_HZ, OP_NCO_RATE, OP_NCO_AMP, OP_NCO = 60, 61, 62, 63, 64, 65
 OP_LADDER_CLEAR, OP_LADDER_ADD, OP_LADDER_RUN, OP_FSK, OP_FM = 66, 67, 68, 69, 70
+OP_AUDIO_DATA, OP_AUDIO_CLEAR, OP_AUDIO_PLAY = 71, 72, 73
+
+
+def prepare_audio(path, rate):
+    """WAV -> signed 8-bit samples at `rate`: mono, 300..3000 Hz band, +6 dB/octave pre-emphasis between 300 and 3000 Hz, hard
+    limiter at the 99.5th percentile (127 = full deviation)."""
+    import wave
+    import numpy as np
+    from scipy.signal import butter, resample_poly, sosfilt, bilinear, lfilter
+    from math import gcd
+    w = wave.open(path)
+    ch, width, fs, n = w.getnchannels(), w.getsampwidth(), w.getframerate(), w.getnframes()
+    if width != 2:
+        raise SystemExit("only 16-bit WAV files are supported")
+    x = np.frombuffer(w.readframes(n), dtype="<i2").astype(np.float64).reshape(-1, ch).mean(axis=1) / 32768.0
+    g = gcd(int(rate), int(fs))
+    x = resample_poly(x, int(rate) // g, int(fs) // g)
+    x = sosfilt(butter(4, [300, 3000], btype="band", fs=rate, output="sos"), x)
+    b, a = bilinear([1 / (2 * np.pi * 300), 1], [1 / (2 * np.pi * 3000), 1], fs=rate)  # +20 dB from 300 to 3000 Hz
+    x = lfilter(b, a, x)
+    x = x / np.percentile(abs(x), 99.5)
+    x = np.clip(x, -1, 1)
+    return np.round(x * 127).astype(np.int8)
 
 
 def main():
@@ -25,6 +48,8 @@ def main():
     ap.add_argument("--nco-hz", type=int, help="move the carrier with an I/Q oscillator at this offset (stage 3 experiment)")
     ap.add_argument("--ladder", help="static register states 'a,i,b,q;a,i,b,q;...' (a,b 0..63, i,q -512..511), each held --hold ms")
     ap.add_argument("--fsk-dev", type=int, help="FSK through the PLL word: deviation in Hz (<= 20000); --rate is then the toggle rate in Hz (<= 5000)")
+    ap.add_argument("--audio", help="speech sender: FM-modulate this WAV file (mono-mixed, band-limited, pre-emphasised, clipped); --fm-dev is the full-scale deviation, --rate the update rate")
+    ap.add_argument("--save-processed", help="with --audio: write the processed int8 samples here (for comparing with a recording)")
     ap.add_argument("--fm-tone", type=int, help="FM by a sine tone of this frequency in Hz; --fm-dev is the deviation, --rate the PLL word update rate")
     ap.add_argument("--fm-dev", type=int, default=3000)
     ap.add_argument("--fast", action="store_true", help="with --fsk-dev: write only the low byte of the PLL word per update")
@@ -39,7 +64,24 @@ def main():
     link = nb.open_link(args.port)
     nb.check_firmware(link)
     link.command(OP_DURATION, args.ms)
-    if args.fm_tone:
+    if args.audio:
+        up = 2 if args.rate > 20000 else 1
+        samples = prepare_audio(args.audio, args.rate // up)
+        if args.save_processed:
+            samples.tofile(args.save_processed)
+        link.command(OP_AUDIO_CLEAR, 0)
+        for off in range(0, len(samples), 16384):
+            chunk = samples[off:off + 16384].tobytes()
+            link.send(OP_AUDIO_DATA, len(chunk))
+            link.ser.write(chunk)
+            link._response(OP_AUDIO_DATA, timeout=10)
+        link.command(OP_NCO_RATE, args.rate)
+        link.command(OP_NCO_AMP, args.fm_dev)
+        link.command(OP_NCO_HZ, up)
+        link.send(OP_AUDIO_PLAY, args.freq_khz | args.g << 22)
+        status, played = link._response(OP_AUDIO_PLAY, timeout=len(samples) * up / args.rate + 8)
+        print(f"status {status} ({'ok' if status == 0 else 'failed'}); updates played: {played} of {len(samples) * up} ({len(samples) * up / args.rate:.2f} s at {args.rate} Hz)")
+    elif args.fm_tone:
         link.command(OP_NCO_HZ, args.fm_tone)
         link.command(OP_NCO_RATE, args.rate)
         link.command(OP_NCO_AMP, args.fm_dev)

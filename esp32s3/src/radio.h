@@ -52,6 +52,17 @@ unsigned radio_tx_test(uint32_t lo_khz, unsigned g, unsigned ms, uint32_t *info)
 #define TX_MAX_STATES 16u
 
 /*
+ * Frequency modulation by recorded audio: the signed 8-bit samples at buf[0..n) (full scale 127 = dev_hz deviation) are played once at
+ * rate_hz through the same PLL-word update as radio_tx_fm(). The audio sits in the unused capture banks 0..2 (TX_AUDIO_BASE), the
+ * host fills it first. The samples are `up` (1 or 2) times fewer than the updates: with 2 each one is linearly interpolated.
+ * Second-order error feedback. n * up / rate_hz <= 12 s. *info receives the number of samples played.
+ */
+#define TX_AUDIO_BASE 0x3FCB0000u
+#define TX_AUDIO_MAX (3u * 65536u)
+unsigned radio_tx_audio(uint32_t lo_khz, unsigned g, uint32_t dev_hz, uint32_t rate_hz, unsigned up, const int8_t *buf,
+                        uint32_t n, uint32_t *info);
+
+/*
  * Frequency modulation by a sine tone: the PLL word follows dev_hz * sin(2 pi tone_hz t), updated rate_hz times per second
  * (<= 40000) with first-order error feedback (the word is 457.8 Hz per step, so plain rounding would be coarse). Only the low
  * byte of the word is written, so the swing must stay inside it; dev_hz <= 20000. *info receives the number of updates.

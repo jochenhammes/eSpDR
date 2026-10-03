@@ -176,6 +176,7 @@ static uint32_t info(unsigned what)
 
 #ifdef ESPDR_TXTEST
 static unsigned tx_test_ms = 500;
+static uint32_t tx_audio_len;
 static uint32_t tx_states[16], tx_states_n, tx_hold_ms = 50;
 static uint32_t tx_nco_hz = 20000, tx_nco_rate = 100000, tx_nco_amp = 400;
 #endif
@@ -265,6 +266,28 @@ static uint8_t execute(uint8_t op, uint32_t arg, uint32_t *value)
         return radio_tx_fsk(arg & 0x3FFFFFu, arg >> 22, tx_test_ms, tx_nco_hz, tx_nco_rate, tx_nco_amp, value);
     case 70: /* RESEARCH: sine-tone FM: tone = NCO offset Hz, update rate = NCO rate Hz, deviation = NCO amplitude Hz */
         return radio_tx_fm(arg & 0x3FFFFFu, arg >> 22, tx_test_ms, tx_nco_hz, tx_nco_amp, tx_nco_rate, value);
+    case 71: { /* RESEARCH: the next `arg` bytes on the line are audio samples; appended to the buffer in capture banks 0..2 */
+        if (arg == 0 || tx_audio_len + arg > TX_AUDIO_MAX)
+            return CTL_BAD_ARGUMENT;
+        uint8_t *dst = (uint8_t *)TX_AUDIO_BASE + tx_audio_len;
+        for (uint32_t i = 0; i < arg; i++) {
+            uint32_t start = cpu_cycles();
+            int byte;
+            while ((byte = serial_read()) < 0)
+                if (cpu_cycles() - start > 480000000u)
+                    return CTL_FAILED; /* 2 s without a byte */
+            dst[i] = (uint8_t)byte;
+        }
+        tx_audio_len += arg;
+        *value = tx_audio_len;
+        return CTL_OK;
+    }
+    case 72: /* RESEARCH: forget the audio */
+        tx_audio_len = 0;
+        return CTL_OK;
+    case 73: /* RESEARCH: play the audio as FM: update rate = NCO rate Hz, deviation (full scale) = NCO amplitude Hz, up = NCO offset (1/2) */
+        return radio_tx_audio(arg & 0x3FFFFFu, arg >> 22, tx_nco_amp, tx_nco_rate, tx_nco_hz, (const int8_t *)TX_AUDIO_BASE,
+                              tx_audio_len, value);
     case 65: /* RESEARCH: like 61 but moving the carrier with the NCO */
         return radio_tx_nco(arg & 0x3FFFFFu, arg >> 22, tx_test_ms, tx_nco_hz, tx_nco_rate, tx_nco_amp, value);
     case 61: /* RESEARCH: carrier at (arg & 0x3FFFFF) kHz with test gain (arg >> 22) */

@@ -705,4 +705,56 @@ unsigned radio_tx_fm(uint32_t lo_khz, unsigned g, unsigned ms, uint32_t tone_hz,
     receiver.status = reconfigure(true);
     return receiver.status == ESP_RADIO_OK ? status : CTL_FAILED;
 }
+
+unsigned radio_tx_audio(uint32_t lo_khz, unsigned g, uint32_t dev_hz, uint32_t rate_hz, unsigned up, const int8_t *buf,
+                        uint32_t n, uint32_t *info)
+{
+    struct esp32s3_lo_plan p0;
+    if (lo_khz < TX_MIN_KHZ || lo_khz + dev_hz / 1000u + 1 > TX_MAX_KHZ || g < TX_MIN_G || g > 127 || n == 0 ||
+        n > TX_AUDIO_MAX || (up != 1 && up != 2) || (uint64_t)n * up * 1000u > (uint64_t)rate_hz * 12000u || dev_hz == 0 ||
+        dev_hz > 5000 || rate_hz < 8000 || rate_hz > 40000 || !esp32s3_plan_lo(lo_khz * 1000u, ESP32S3_LO_NORMAL, &p0))
+        return CTL_BAD_ARGUMENT;
+    uint32_t steps_q16 = (uint32_t)(((uint64_t)dev_hz << 16) * 65536u / 30000000u);
+    unsigned steps = (steps_q16 >> 16) + 6; /* second-order shaping swings wider than the signal */
+    if ((p0.sdm_word & 0xFF) < steps || (p0.sdm_word & 0xFF) > 255 - steps)
+        return CTL_BAD_ARGUMENT;
+    if (receiver.status != ESP_RADIO_OK)
+        return CTL_NOT_READY;
+    unsigned status = CTL_OK;
+    uint32_t played = 0;
+    if (!release_receiver() || !tune_pll(lo_khz * 1000u)) {
+        status = CTL_FAILED;
+    } else {
+        txcal_debuge_mode();
+        if (!tune_pll(lo_khz * 1000u)) {
+            status = CTL_FAILED;
+        } else {
+            uint32_t period = 240000000u / rate_hz;
+            int32_t e1 = 0, e2 = 0; /* quantisation errors of the last two updates, Q16 */
+            start_tx_tone_step(1, 0, (int)g, 0, 0, 0);
+            delay_us(20000); /* 20 ms of plain carrier before the audio starts */
+            uint32_t next = cpu_cycles() + period;
+            for (uint32_t k = 0; k < n * up; k++) {
+                int32_t s0 = buf[k / up], s1 = buf[k / up + 1 < n ? k / up + 1 : k / up];
+                int32_t s = up == 2 && (k & 1u) ? (s0 + s1) / 2 : s0; /* linear interpolation between the stored samples */
+                int32_t v = (int32_t)(((int64_t)s * steps_q16) / 127);  /* wanted offset in word steps, Q16 */
+                int32_t u = v - 2 * e1 + e2;                            /* error feedback, noise transfer function (1 - z^-1)^2 */
+                int32_t w = (u + 0x8000) >> 16;
+                e2 = e1;
+                e1 = w * 65536 - u;
+                analog_write(I2C_SDM, 5, (uint8_t)((int32_t)(p0.sdm_word & 0xFF) + w));
+                played++;
+                while ((int32_t)(cpu_cycles() - next) < 0)
+                    ;
+                next += period;
+            }
+            analog_write(I2C_SDM, 5, (uint8_t)p0.sdm_word);
+            start_tx_tone_step(0, 0, 0, 0, 0, 0);
+        }
+        txcal_work_mode();
+    }
+    *info = played;
+    receiver.status = reconfigure(true);
+    return receiver.status == ESP_RADIO_OK ? status : CTL_FAILED;
+}
 #endif
