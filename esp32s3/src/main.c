@@ -174,6 +174,10 @@ static uint32_t info(unsigned what)
     }
 }
 
+#ifdef ESPDR_TXTEST
+static unsigned tx_test_ms = 500;
+#endif
+
 static uint8_t execute(uint8_t op, uint32_t arg, uint32_t *value)
 {
     switch (op) {
@@ -229,6 +233,14 @@ static uint8_t execute(uint8_t op, uint32_t arg, uint32_t *value)
             return CTL_BAD_ARGUMENT;
         *value = stream_dsp_bench(arg);
         return CTL_OK;
+#endif
+#ifdef ESPDR_TXTEST
+    case 60: /* RESEARCH: duration of the test carrier, ms (default 500) */
+        tx_test_ms = arg;
+        *value = arg;
+        return arg >= 1 && arg <= 5000 ? CTL_OK : CTL_BAD_ARGUMENT;
+    case 61: /* RESEARCH: carrier at (arg & 0x3FFFFF) kHz with test gain (arg >> 22) */
+        return radio_tx_test(arg & 0x3FFFFFu, arg >> 22, tx_test_ms, value);
 #endif
     case ESP_STOP: /* the run, if any, has already ended */
     case ESP_ARG_HIGH: /* kept by the command loop */

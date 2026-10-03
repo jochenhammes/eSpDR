@@ -54,6 +54,9 @@ SDK_INCLUDES := -I. $(addprefix -I$(IDF)/,$(SDK_INCLUDE_DIRS))
 
 ifeq ($(NARROWBAND),1)
 NB_FLAGS := -DESPDR_NARROWBAND=1
+ifeq ($(TXTEST),1)
+NB_FLAGS += -DESPDR_TXTEST=1 # RESEARCH ONLY: transmit experiments, see docs/TX-RESEARCH.md. Never part of a release.
+endif
 ifeq ($(PROFILE),1)
 NB_FLAGS += -DPROFILE=1 # per-section cycle counters in dsp_unit(), read with `espdr_nb.py dspbench --profile`
 endif

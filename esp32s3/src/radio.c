@@ -483,3 +483,46 @@ int phy_printf(const char *format, ...)
 void coex_pti_print(void) {}
 
 int64_t esp_timer_get_time(void) { return (int64_t)(timer_ticks() / 16); }
+
+#ifdef ESPDR_TXTEST
+/* ---- transmit research (never part of a release) ------------------------------- */
+
+extern void txcal_debuge_mode(void);
+extern void txcal_work_mode(void);
+extern void start_tx_tone_step(int a, int i, int g, int b, int q, int h);
+
+static uint32_t sdm_readback(void)
+{
+    return ((uint32_t)analog_read(I2C_SDM, 3) << 16) | ((uint32_t)analog_read(I2C_SDM, 4) << 8) | analog_read(I2C_SDM, 5);
+}
+
+/*
+ * The sequence of the PHY's own continuous-wave test (wifiscwout in librftest): test mode, then
+ * start_tx_tone_step(1, 0, g, 0, 0, 0): amplitude 1, I = Q = 0, gain field -g. Only the channel selection is ours: the PLL
+ * is programmed through tune_pll() before and after the PHY's test mode, so the carrier sits where the LO plan puts it.
+ */
+unsigned radio_tx_test(uint32_t lo_khz, unsigned g, unsigned ms, uint32_t *info)
+{
+    if (lo_khz < TX_MIN_KHZ || lo_khz > TX_MAX_KHZ || g < TX_MIN_G || g > 127 || ms == 0 || ms > 5000)
+        return CTL_BAD_ARGUMENT;
+    if (receiver.status != ESP_RADIO_OK)
+        return CTL_NOT_READY;
+    unsigned status = CTL_OK;
+    if (!release_receiver() || !tune_pll(lo_khz * 1000u)) {
+        status = CTL_FAILED;
+    } else {
+        txcal_debuge_mode();
+        if (!tune_pll(lo_khz * 1000u)) {
+            status = CTL_FAILED;
+        } else {
+            start_tx_tone_step(1, 0, (int)g, 0, 0, 0);
+            *info = sdm_readback();
+            delay_us(ms * 1000u);
+            start_tx_tone_step(0, 0, 0, 0, 0, 0);
+        }
+        txcal_work_mode();
+    }
+    receiver.status = reconfigure(true);
+    return receiver.status == ESP_RADIO_OK ? status : CTL_FAILED;
+}
+#endif

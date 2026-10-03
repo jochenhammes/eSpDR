@@ -25,6 +25,19 @@ unsigned radio_set(unsigned op, uint32_t value, uint32_t *effective);
 /* Settings in effect, indexed by ESP_STAT_LO_HZ..ESP_STAT_SDM_WORD; 0 otherwise. */
 uint32_t radio_stat(unsigned index);
 
+#ifdef ESPDR_TXTEST
+/*
+ * RESEARCH ONLY (docs/TX-RESEARCH.md): transmits an unmodulated carrier at lo_khz for `ms` milliseconds with the PHY's
+ * test-tone setting `g` (larger = weaker; the frontend's gain field is -g), then restores the receiver. Limited to
+ * TX_MIN_KHZ..TX_MAX_KHZ, g >= TX_MIN_G and ms <= 5000. *info receives the PLL's sigma-delta word as read back with the
+ * carrier on. Returns a CTL_* status.
+ */
+#define TX_MIN_KHZ 2320000u
+#define TX_MAX_KHZ 2400000u
+#define TX_MIN_G 64u
+unsigned radio_tx_test(uint32_t lo_khz, unsigned g, unsigned ms, uint32_t *info);
+#endif
+
 /* The dump engine's control word for the selected sample rate (not running),
  * and the pairs it writes per 16 MHz system timer tick. */
 uint32_t radio_dump_control(void);
