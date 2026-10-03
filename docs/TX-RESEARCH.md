@@ -191,7 +191,7 @@ Conclusion for SSB: the gain field is a coarse 20 dB step plus a weak slope, not
 differences make it worse. Open: other amplitude controls (field `a` in bits 25:18: 0 / 1 / 2 gave off / on / -20 dB; the PHY's power
 backoff `target_power_backoff`, the `0x60006000` power field in bits 17:10, the digital TX gain `rom_set_tx_dig_gain`).
 
-## SSB, stage A continued (measured), window of 10:05 to 11:05 on the test day
+## SSB, stage A continued (measured)
 
 * **Registers with the carrier on** (g = 127): `0x60006040 = 0x20060400` (bit 29 set, `a` = 1 in bits 25:18, gain field 129 in bits 17:10),
   `0x60006004 = 0` (the value the PHY's own CW test subtracts from its power setting), a table of 28 signed bytes (-29 ... -3) at
