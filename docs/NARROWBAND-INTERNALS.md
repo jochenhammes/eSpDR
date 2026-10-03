@@ -114,12 +114,27 @@ A packet that does not fit is dropped whole, so the byte stream stays aligned; t
 The same endpoint carries the control protocol, so a stray byte from the host stops a run (the firmware treats any received
 byte as `ESP_STOP`). That is why nothing else may open the port while a run is going, and why ModemManager must be kept off it.
 
-The USB Serial/JTAG endpoint takes 64-byte packets and, on the test host, 12 of them per millisecond: 0.77 MB/s. 500 ksps of int8
-I/Q (1 MB/s) therefore does not fit, regardless of CPU time.
+The USB Serial/JTAG endpoint has one 64-byte IN buffer. On the test host (xHCI root port, Linux) the stream reaches 13.6 packets per
+millisecond, **0.87 MB/s**. 500 ksps of int8 I/Q (1.0 MB/s) therefore does not fit, regardless of CPU time.
+
+What was measured (`espdr_nb.py bench`, 3 s runs, 0 bad blocks):
+
+| Variant | MB/s |
+|---|---|
+| first version: poll for a free FIFO byte before every byte written | 0.77 |
+| wait for `SERIAL_IN_EMPTY` once per packet, then write the 64 bytes blind | **0.87** |
+| the same read with libusb (cdc_acm and the tty layer bypassed), 16 KB transfers | 0.87 |
+| the same with 1 KB transfers | 0.65 |
+
+The chip sits idle about 95 % of the time waiting for the host to take the buffer, and the host side is not the bottleneck either: reading
+with libusb gives exactly the same rate. What remains is the Full-Speed bus itself, whose per-packet turnaround with a single buffer
+caps the rate at about 73 µs per packet (theory for 64-byte bulk packets: about 19 per millisecond). The next suspects would be the
+host controller or a hub with a transaction translator; that was not tried, and this project does not pursue it. The consequence
+is the rate ladder: 250 ksps (0.50 MB/s) and 333 ksps (0.67 MB/s) fit with margin (FIFO peak about 1.4 KB), 500 ksps does not.
 
 ## Control operations
 
-On top of `protocol/control.h`: `NB_SET_DECIM` (29, only 4 is supported in practice), `NB_SET_FORMAT` (30), `NB_SET_OUTSHIFT` (31),
+On top of `protocol/control.h`: `NB_SET_DECIM` (29: 4 and 3 are supported, 2 loses samples to the USB limit), `NB_SET_FORMAT` (30), `NB_SET_OUTSHIFT` (31),
 `NB_BENCH` (32, USB throughput), `NB_DSPBENCH` (33: decimator cycles, `NB_DSP_VERIFY` for the SIMD check, `NB_DSP_PROFILE*` in
 `PROFILE=1` builds). Status 32 and 33 report dropped units and the FIFO peak. They are numbered after `ESP_STAT_COUNT`; keep them there
 if upstream adds statistics.

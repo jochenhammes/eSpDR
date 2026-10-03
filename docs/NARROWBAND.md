@@ -225,7 +225,8 @@ synthesizer (up to ±190 Hz) digitally.
 * **250 or 333 ksps, not 500.** The 500 ksps mode (`--decim 2`) needs 1.0 MB/s, but the USB Serial/JTAG port delivers at most 0.87 MB/s
   to this host (the chip is waiting for the host 95 % of the time, one 64-byte packet at a time); with `--decim 2` about a quarter of
   the samples are lost and the chip reports `USB too slow`. The signal processing is no longer the limit (69 % of the time budget).
-  Whether another host controller or a hub gets above 1.0 MB/s is untested.
+  Reading the stream with libusb instead of the kernel's serial driver gives the same 0.87 MB/s, so the limit is the USB Full-Speed link
+  of the ESP32-S3, not the host software ([internals](NARROWBAND-INTERNALS.md)). A different host controller or a hub was not tried.
 * **A strong spur at 2400.000 and 2440.000 MHz.** The 60th and 61st harmonics of the 40 MHz crystal are inside the
   receive band; with the LO at 2400 MHz a line sits at the centre, about 10 dB stronger than a −40 dBm carrier at gain 60. Do not
   mistake it for a signal. Faint lines at about ±1.6 kHz and ±9 kHz around strong signals were also seen; their origin is not
