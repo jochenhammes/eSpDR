@@ -81,3 +81,23 @@ crystal offset) and +5 kHz at 50 Hz:
 
 Next: higher toggle rates and a sinusoidal word sequence (FM) to find the modulation bandwidth the loop allows.
 
+### Stage 3, tests 7 and 8: how fast can the word be rewritten
+
+All with +5 kHz deviation, `g = 127`, PlutoSDR at 20 dB gain; 200 ms bursts.
+
+| Test | Update | Toggle rate | Updates written | Result |
+|---|---|---|---|---|
+| 7a | 5 register writes with the bracket | 500 Hz | 200 of 200 | full swing (-114 / +5131 Hz), amplitude dips to about 10 % at every jump |
+| 7b | the same | 2000 Hz | 800 of 800 | full swing (-423 / +5317 Hz), dips |
+| 7c | the same | 5000 Hz | 2000 of 2000 | amplitude halves (3.95e-3 against 9e-3), frequency estimate breaks up: the loop is disturbed |
+| 8a | low byte of the word only, no bracket | 2000 Hz | 800 | 776 clean edges in 194 ms = 2000 Hz, swing -110 / +5226 Hz, **no dip** (0.0 % of the time below 30 % of the mean) |
+| 8b | the same | 5000 Hz | 2000 | 1940 edges in 194 ms = 5000 Hz, swing -185 / +5259 Hz, **no dip** |
+
+The dips come from bracketing every update with `0x07` / `0x17` in register 0 (see the left half of `images/tx-fsk-spectrum.png`). Writing
+only the low byte works as long as the two words share their upper bytes, i.e. a swing of less than 117 kHz that does not cross a
+256-step boundary. The achievable modulation rate is therefore at least 10 kHz updates (2 per toggle at 5 kHz), enough for voice.
+Caveat: the amplitude seen at the Pluto differs between runs (4.4e-3 to 9e-3) because the same recording filter keeps both tones in its band; the carrier itself is
+constant within a run.
+
+![FSK received with a PlutoSDR](images/tx-fsk-spectrum.png)
+
