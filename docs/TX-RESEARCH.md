@@ -60,3 +60,24 @@ Reading: the registers are not a plain I/Q input, and a second call does not sim
 else (a tone generator with `i` and `q` as frequency or phase terms, a power-up or gain sequence that only the first call performs), or the
 first call arms something the later ones switch off. The next tests separate these.
 
+### Stage 3, tests 5 and 6
+
+Test 5 (ladders of three states, 50 ms each, `g = 127`, energy per 5 ms instead of the coherent mean, which phase jumps between states had
+made misleading): `(1,0,0,0)` then `(2,0,0,0)` then `(1,0,0,0)` gives a carrier at 0.98e-3 rms, then **20 dB less** at the same
+frequency, then 0.98e-3 again. `a` is not a linear amplitude, and `i` and `q` are not an I/Q input (`(1,100,0,0)` also kills the
+carrier). The fields look like parameters of a test-tone generator. Conclusion: this register pair gives key-on/key-off at best.
+
+**Test 6: FSK through the PLL's sigma-delta word works.** After `tune_pll()` has found the lock window and pinned the capacitor, the
+carrier is started as in stage 2 (`start_tx_tone_step(1, 0, g, 0, 0, 0)`) and only the word is rewritten (`I2C_SDM` registers 3..5,
+bracketed by writing 0x07 and 0x17 to register 0, as `tune_pll()` does): `radio_tx_fsk()`. The word is `W` in `LO = 30 MHz x (32 + W/65536)`, a
+step of 457.8 Hz. PlutoSDR at 20 dB gain (carrier at -42 dBFS rms, peak 0.012), 400 ms, toggling between 2350.000 MHz (+12.5 kHz
+crystal offset) and +5 kHz at 50 Hz:
+
+| | |
+|---|---|
+| Frequency | 0 / +5000 Hz (measured 4900..5180 Hz in single 2.5 ms readings), 40 word updates, all as commanded |
+| Amplitude | 8.0e-3 rms, constant to +-2 %, no dropout at any jump |
+| Settling | below 2.5 ms (the measurement grid) |
+
+Next: higher toggle rates and a sinusoidal word sequence (FM) to find the modulation bandwidth the loop allows.
+

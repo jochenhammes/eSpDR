@@ -13,7 +13,7 @@ import sys
 import espdr_nb as nb
 
 OP_DURATION, OP_CARRIER, OP_NCO_HZ, OP_NCO_RATE, OP_NCO_AMP, OP_NCO = 60, 61, 62, 63, 64, 65
-OP_LADDER_CLEAR, OP_LADDER_ADD, OP_LADDER_RUN = 66, 67, 68
+OP_LADDER_CLEAR, OP_LADDER_ADD, OP_LADDER_RUN, OP_FSK = 66, 67, 68, 69
 
 
 def main():
@@ -24,6 +24,7 @@ def main():
     ap.add_argument("--ms", type=int, default=500, help="duration of the carrier, 1..5000 ms")
     ap.add_argument("--nco-hz", type=int, help="move the carrier with an I/Q oscillator at this offset (stage 3 experiment)")
     ap.add_argument("--ladder", help="static register states 'a,i,b,q;a,i,b,q;...' (a,b 0..63, i,q -512..511), each held --hold ms")
+    ap.add_argument("--fsk-dev", type=int, help="FSK through the PLL word: deviation in Hz (<= 20000); --rate is then the toggle rate in Hz (<= 5000)")
     ap.add_argument("--hold", type=int, default=50)
     ap.add_argument("--rate", type=int, default=100000, help="NCO update rate in Hz (1000..1500000)")
     ap.add_argument("--amp", type=int, default=400, help="NCO amplitude (0..1000)")
@@ -35,7 +36,13 @@ def main():
     link = nb.open_link(args.port)
     nb.check_firmware(link)
     link.command(OP_DURATION, args.ms)
-    if args.ladder:
+    if args.fsk_dev:
+        link.command(OP_NCO_HZ, args.fsk_dev)
+        link.command(OP_NCO_RATE, args.rate)
+        link.send(OP_FSK, args.freq_khz | args.g << 22)
+        status, upd = link._response(OP_FSK, timeout=args.ms / 1000 + 6)
+        print(f"status {status} ({'ok' if status == 0 else 'failed'}); PLL word updates: {upd}")
+    elif args.ladder:
         link.command(OP_LADDER_CLEAR, args.hold)
         for st in args.ladder.split(";"):
             a, i, b, q = (int(v) for v in st.split(","))

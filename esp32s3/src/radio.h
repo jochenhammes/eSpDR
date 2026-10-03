@@ -50,6 +50,13 @@ unsigned radio_tx_test(uint32_t lo_khz, unsigned g, unsigned ms, uint32_t *info)
  * 10 bit). *info receives the number of states run.
  */
 #define TX_MAX_STATES 16u
+
+/*
+ * Frequency-shift keying through the PLL's sigma-delta word: the carrier of radio_tx_test() jumps between lo_khz and lo_khz +
+ * dev_hz (<= 20 kHz) toggle_hz times per second (<= 5000), for ms. The word is 30 MHz / 65536 = 457.8 Hz per step. *info
+ * receives the number of word updates; status as above.
+ */
+unsigned radio_tx_fsk(uint32_t lo_khz, unsigned g, unsigned ms, uint32_t dev_hz, uint32_t toggle_hz, uint32_t *info);
 unsigned radio_tx_ladder(uint32_t lo_khz, unsigned g, const uint32_t *states, unsigned count, unsigned hold_ms,
                          uint32_t *info);
 unsigned radio_tx_nco(uint32_t lo_khz, unsigned g, unsigned ms, uint32_t offset_hz, uint32_t rate_hz, unsigned amp,

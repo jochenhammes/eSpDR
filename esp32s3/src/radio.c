@@ -599,4 +599,50 @@ unsigned radio_tx_ladder(uint32_t lo_khz, unsigned g, const uint32_t *states, un
     receiver.status = reconfigure(true);
     return receiver.status == ESP_RADIO_OK ? status : CTL_FAILED;
 }
+
+static void sdm_write(uint32_t word)
+{
+    analog_write(I2C_SDM, 0, 0x07);
+    analog_write(I2C_SDM, 3, (uint8_t)(word >> 16));
+    analog_write(I2C_SDM, 4, (uint8_t)(word >> 8));
+    analog_write(I2C_SDM, 5, (uint8_t)word);
+    analog_write(I2C_SDM, 0, 0x17);
+}
+
+unsigned radio_tx_fsk(uint32_t lo_khz, unsigned g, unsigned ms, uint32_t dev_hz, uint32_t toggle_hz, uint32_t *info)
+{
+    struct esp32s3_lo_plan p0, p1;
+    if (lo_khz < TX_MIN_KHZ || lo_khz + dev_hz / 1000u + 1 > TX_MAX_KHZ || g < TX_MIN_G || g > 127 || ms == 0 || ms > 2000 ||
+        dev_hz == 0 || dev_hz > 20000 || toggle_hz == 0 || toggle_hz > 5000 ||
+        !esp32s3_plan_lo(lo_khz * 1000u, ESP32S3_LO_NORMAL, &p0) || !esp32s3_plan_lo(lo_khz * 1000u + dev_hz, ESP32S3_LO_NORMAL, &p1))
+        return CTL_BAD_ARGUMENT;
+    if (receiver.status != ESP_RADIO_OK)
+        return CTL_NOT_READY;
+    unsigned status = CTL_OK;
+    uint32_t updates = 0;
+    if (!release_receiver() || !tune_pll(lo_khz * 1000u)) {
+        status = CTL_FAILED;
+    } else {
+        txcal_debuge_mode();
+        if (!tune_pll(lo_khz * 1000u)) {
+            status = CTL_FAILED;
+        } else {
+            start_tx_tone_step(1, 0, (int)g, 0, 0, 0);
+            uint32_t half = 120000000u / toggle_hz, next = cpu_cycles() + half, total = (uint32_t)((uint64_t)ms * toggle_hz * 2 / 1000u);
+            for (uint32_t k = 0; k < total; k++) {
+                sdm_write((k & 1u) ? p0.sdm_word : p1.sdm_word); /* the first half is the upper frequency */
+                updates++;
+                while ((int32_t)(cpu_cycles() - next) < 0)
+                    ;
+                next += half;
+            }
+            sdm_write(p0.sdm_word);
+            start_tx_tone_step(0, 0, 0, 0, 0, 0);
+        }
+        txcal_work_mode();
+    }
+    *info = updates;
+    receiver.status = reconfigure(true);
+    return receiver.status == ESP_RADIO_OK ? status : CTL_FAILED;
+}
 #endif
