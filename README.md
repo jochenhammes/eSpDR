@@ -1,5 +1,10 @@
 # eSpDR narrowband: an SDR from one ESP32-S3 board
 
+> **This work has moved.** The maintained, installable version, with the two command line tools `espdr-rx` (rtl_tcp receiver for SDR++) and `espdr-tx`
+> (FM and SSB voice transmitter, experimental), a release with the firmware inside and a step-by-step installation guide, lives in
+> **[jochenhammes/esp32-sdr-trx](https://github.com/jochenhammes/esp32-sdr-trx)**. This repository keeps the development history (the branches `narrowband`
+> and `narrowband-pr`, the releases `narrowband-v0.1.0` to `v0.2.0`, and the tag `tx-research-final` with the transmitter research). New work happens in the new repository.
+
 [![CI](https://github.com/jochenhammes/eSpDR/actions/workflows/ci.yml/badge.svg?branch=narrowband)](https://github.com/jochenhammes/eSpDR/actions/workflows/ci.yml)
 [![License: 0BSD](https://img.shields.io/badge/license-0BSD-blue.svg)](LICENSE)
 
