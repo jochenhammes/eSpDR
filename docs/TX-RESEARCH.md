@@ -19,6 +19,13 @@ Together that is polar modulation, and it carries:
 | narrowband FM | 1 kHz tone, +-3 kHz: SINAD 31.8 dB; speech, +-2.5 kHz: understood, 19 dB SINAD in the voice band (limited by the receiver's noise) |
 | **SSB (USB)** | two-tone: unwanted sideband 61 to 63 dB and third-order intermodulation 33 dB below the wanted tones with the carrier fully suppressed (29 / 51 dB with a 55 % carrier); speech: understood, 19 s transmissions with the drift cancelled |
 
+![The SSB transmission of the ESP32-S3 received with a HackRF in SDR++](images/esp32-SSB-transmit.png)
+
+*SDR++ with a HackRF on a second computer, USB demodulator (2.8 kHz), tuned to the carrier at 2350.0125 MHz while the ESP32-S3 transmits looped
+speech (carrier ratio 0.05). The spectrum shows the narrow carrier line, the waterfall the syllables of the voice as bursts in the upper sideband, next to
+the carrier and none below it. The thin vertical line at the left is constant over the whole recording and not part of the transmission
+(presumably a spur of the receiver; not investigated).*
+
 ## How to use it
 
 ```sh
@@ -276,7 +283,7 @@ from run to run to about 20 Hz. Within the first 5 s the drift is almost over; a
 drift 210 Hz): 96 000 x 8 updates, none late. The carrier stays within +-20 Hz of its mean (-198 ... -160 Hz against the reference), the level of
 the speech sideband against the carrier is the same in every pass (-22.1 and -14.0 dB at the two measuring points), the amplitude of
 carrier and speech together falls by 3.5 dB across the transmission (the gain drift above). Heard live on a second computer (HackRF, SDR++ with a USB
-demodulator): **the speech is understood**.
+demodulator, see the screenshot at the top): **the speech is understood**.
 
 Open: measure the SSB speech quality (SINAD) with a receiver that follows the carrier; repeat the FM speech with the fixed upload; reduce
 the carrier ratio; continuous streaming instead of a looped 2.4 s buffer; compute the Hilbert transform and the polar conversion on the
