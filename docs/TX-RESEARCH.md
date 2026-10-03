@@ -149,3 +149,50 @@ Conclusion for SSB: the gain field is a coarse 20 dB step plus a weak slope, not
 differences make it worse. Open: other amplitude controls (field `a` in bits 25:18: 0 / 1 / 2 gave off / on / -20 dB; the PHY's power
 backoff `target_power_backoff`, the `0x60006000` power field in bits 17:10, the digital TX gain `rom_set_tx_dig_gain`).
 
+## SSB, stage A continued (measured), window of 10:05 to 11:05 on the test day
+
+* **Registers with the carrier on** (g = 127): `0x60006040 = 0x20060400` (bit 29 set, `a` = 1 in bits 25:18, gain field 129 in bits 17:10),
+  `0x60006004 = 0` (the value the PHY's own CW test subtracts from its power setting), a table of 28 signed bytes (-29 ... -3) at
+  `0x60006014..0x60006030`.
+* **`target_power_backoff(b)` (PHY), b = 0..120:** no effect at all on the test tone (all steps within 0.1 dB). A call takes 38 us.
+* **Field `a`:** a switch, not an amplitude: odd values transmit (`a` = 1: 2.22e-3, `a` = 3: 2.34e-3), even values are off (-34 dB).
+* **Gain code g, two branches.** `g >= 128` (field <= 128): plateau, flat to 1.4 dB up to g = 255. **`g <= 127` (field >= 129): a smooth, monotone
+  branch**, 4.0e-3 at g = 127 to 31.4e-3 at g = 64 (Pluto 20 dB): +17.9 dB over 63 codes, **0.28 dB per code**, no knee, and a frequency
+  pull of only about -38 Hz across the whole range. At g = 64 the carrier is about 2 dB above the plateau. This branch is the amplitude control.
+* **Speed (gain square wave between g = 127 and 70, 100 ms bursts):** swing 15.7, 15.8, 16.6, 17.5 dB at 1, 5, 10, 20 kHz as expected,
+  10-90 % time about 3 us (limited by the 150 kHz measuring filter), toggle rate exact. One gain write is a read-modify-write of one register.
+
+## SSB by polar modulation (measured): first clean single-sideband signal
+
+`radio_tx_ssb()` plays `n` pairs (signed PLL-word delta, gain code g = 64..127) at 40 kHz: the amplitude of the analytic signal
+`c + x_a(t)` goes through the gain code (via the measured curve), its instantaneous frequency through the PLL word (error feedback of the
+second order, computed on the host). USB means the audio spectrum sits above the carrier. `prepare_ssb()` in `host/python/espdr_txtest.py`.
+Carrier ratio 0.55 (the carrier is 55 % of the peak envelope), two tones 700 + 1700 Hz, 300 ms, PlutoSDR 20 dB at 50 cm:
+
+| Line | Level against the carrier |
+|---|---|
+| carrier | 0 dB (-37.7 dBFS) |
+| wanted +700 Hz / +1700 Hz | -7.8 / -7.8 dB |
+| mirror (lower sideband) -700 / -1700 Hz | -34.9 / -30.0 dB (27.1 / 22.2 dB below the wanted tones) |
+| IMD3 at -300 Hz / +2700 Hz | -64.4 / -54.1 dB |
+| noise floor 8..30 kHz above the carrier | -70.7 dB |
+
+The mirror grows with the audio frequency: the gain path and the frequency path do not have the same delay. Shifting the gain path
+against the frequency path (positive = later), mirror suppression against the weaker wanted tone:
+
+| delay [updates of 25 us] | -2 | -1 | 0 | +0.6 | +0.8 | **+1.0** | +1.2 | +1.4 | +2 |
+|---|---|---|---|---|---|---|---|---|---|
+| suppression [dB] | 21.4 | 24.4 | 22.2 | 28.6 | 29.8 | **30.3** | 29.7 | 28.9 | 28.4 |
+
+The gain path has to be delayed by about 25 us. About 30 dB suppression remains, probably limited by the gain code's 0.28 dB steps and the
+word's 459 Hz steps; enough for voice. Default of `--ssb-delay` is 1.0.
+
+## A bug in the audio upload that spoiled the earlier speech test (found and fixed)
+
+The audio buffer sits in the unused capture banks, which accept **32-bit accesses only**: a byte store fills all four byte lanes. Op 71
+therefore kept only the last byte of every four (read back: 4, 4, 4, 4, 8, 8, 8, 8, ...). The earlier FM speech test played every fourth sample,
+four times each (a 5 kHz effective sample rate), which explains the roll-off above 2 kHz and much of the low SINAD that had been blamed on the PLL. The
+first SSB attempt showed it as a carrier shifted by 31 to 58 kHz (the word delta was the gain code). Fixed: the upload assembles words,
+the playback loops read words (`tx_byte()`), and a readback op (79) verifies it. The FM speech result (SINAD 15.7 dB, flat to 1.6 kHz) is therefore
+**not** a limit of the transmitter and must be repeated.
+

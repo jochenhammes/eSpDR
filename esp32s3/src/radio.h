@@ -59,8 +59,24 @@ unsigned radio_tx_test(uint32_t lo_khz, unsigned g, unsigned ms, uint32_t *info)
  *   mode 1 square: g alternates between `a` and `b`, c times a second, for d ms in total.
  * *info receives the number of gain writes.
  */
-#define TX_GAIN_MIN_G 127u
+#define TX_GAIN_MIN_G 64u
 unsigned radio_tx_gain(uint32_t lo_khz, unsigned mode, unsigned a, unsigned b, int c, unsigned d, uint32_t *info);
+
+/*
+ * SSB stage A, step 2: other amplitude controls. radio_tx_regs() starts the carrier (start_tx_tone_step(1, 0, g, 0, 0, 0)) and copies
+ * the frontend registers 0x60006000..0x60006060 (25 words) to tx_regs[] (read-only). radio_tx_backoff() does the same start and then
+ * calls the PHY's target_power_backoff(b) for b = b0..b1 in steps of `step`, each held hold_ms; *info receives the CPU cycles one call took.
+ */
+extern uint32_t tx_regs[25];
+unsigned radio_tx_regs(uint32_t lo_khz, unsigned g, uint32_t *info);
+unsigned radio_tx_backoff(uint32_t lo_khz, unsigned g, int b0, int b1, int step, unsigned hold_ms, uint32_t *info);
+
+/*
+ * SSB by polar modulation: n updates of two bytes each at TX_AUDIO_BASE, played at rate_hz: a signed word delta (in 458.8 Hz steps, the
+ * host has done the noise shaping) and a gain code g (clamped to 64..127, the smooth weak branch of the gain field). The carrier
+ * starts at g = 127 with 20 ms of plain carrier. *info receives the number of updates that were late.
+ */
+unsigned radio_tx_ssb(uint32_t lo_khz, uint32_t rate_hz, const uint8_t *buf, uint32_t n, uint32_t *info);
 
 /*
  * Frequency modulation by recorded audio: the signed 8-bit samples at buf[0..n) (full scale 127 = dev_hz deviation) are played once at

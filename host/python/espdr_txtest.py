@@ -15,7 +15,7 @@ import espdr_nb as nb
 OP_DURATION, OP_CARRIER, OP_NCO_HZ, OP_NCO_RATE, OP_NCO_AMP, OP_NCO = 60, 61, 62, 63, 64, 65
 OP_LADDER_CLEAR, OP_LADDER_ADD, OP_LADDER_RUN, OP_FSK, OP_FM = 66, 67, 68, 69, 70
 OP_AUDIO_DATA, OP_AUDIO_CLEAR, OP_AUDIO_PLAY = 71, 72, 73
-OP_GAIN = 74
+OP_GAIN, OP_REGS, OP_REGS_READ, OP_BACKOFF, OP_SSB = 74, 75, 76, 77, 78
 
 
 def prepare_audio(path, rate):
@@ -40,6 +40,67 @@ def prepare_audio(path, rate):
     return np.round(x * 127).astype(np.int8)
 
 
+# Gain code g -> amplitude relative to g = 127, measured with the Pluto (SSB stage A1, 3 codes per point)
+GAIN_CURVE = [(127, 0.0), (124, 1.32), (121, 1.94), (118, 2.79), (115, 3.82), (112, 4.74), (109, 5.22), (106, 6.05), (103, 7.03),
+              (100, 8.05), (97, 8.79), (94, 9.78), (91, 10.56), (88, 11.57), (85, 12.26), (82, 13.07), (79, 13.91), (76, 14.76),
+              (73, 15.51), (70, 16.33), (67, 17.12), (64, 17.90)]
+
+
+def prepare_ssb(source, rate, ms, carrier, delay):
+    """(data, reference): interleaved (word delta int8, gain code uint8) per update at `rate`, for USB polar modulation with a
+    carrier: z = c + analytic(audio); amplitude |z| through the gain field, frequency d(arg z)/dt through the PLL word."""
+    import numpy as np
+    from scipy.signal import hilbert, resample_poly, butter, sosfilt
+    from math import gcd
+    n8 = int(8000 * ms / 1000)
+    if source.startswith("twotone:"):
+        f1, f2 = (float(v) for v in source[8:].split(","))
+        t = np.arange(n8) / 8000.0
+        x = 0.5 * np.sin(2 * np.pi * f1 * t) + 0.5 * np.sin(2 * np.pi * f2 * t)
+        x = x * np.minimum(1, np.minimum(np.arange(n8), n8 - np.arange(n8)) / 80.0)   # 10 ms fades
+    else:
+        import wave
+        w = wave.open(source)
+        ch, fs0 = w.getnchannels(), w.getframerate()
+        x = np.frombuffer(w.readframes(w.getnframes()), dtype="<i2").astype(float).reshape(-1, ch).mean(axis=1) / 32768.0
+        g = gcd(8000, fs0)
+        x = resample_poly(x, 8000 // g, fs0 // g)[:n8]
+        x = sosfilt(butter(4, [300, 2700], btype="band", fs=8000, output="sos"), x)
+        x = np.clip(x / np.percentile(abs(x), 99.5), -1, 1)
+    xa = hilbert(x)                                         # x + j H{x}: positive frequencies only = upper sideband
+    xa = xa / np.max(abs(xa))
+    up = rate // 8000
+    xa_fine = resample_poly(xa, up * 10, 1)                 # bandlimited: the interpolation is exact up to the filter
+    xa = xa_fine[::10]
+    c = carrier
+    z = c + (1 - carrier) * xa
+    zf = c + (1 - carrier) * xa_fine
+    # the envelope may be shifted by a fraction of an update: gain path later by `delay` updates (can be fractional)
+    sh = int(round(10 * delay))
+    Af = abs(np.roll(zf, sh))
+    A = Af[::10]; A = A / A.max()
+    phi = np.unwrap(np.angle(z))
+    f = np.diff(phi, prepend=phi[0]) * rate / (2 * np.pi)   # Hz
+    STEP = 30e6 / 65536
+    e1 = e2 = 0.0
+    dw = np.zeros(len(f), dtype=np.int64)
+    for i, v in enumerate(f / STEP):
+        u = v - 2 * e1 + e2
+        w = np.floor(u + 0.5)
+        e2 = e1
+        e1 = w - u
+        dw[i] = w
+    dw = np.clip(dw, -120, 120).astype(np.int8)
+    db = 20 * np.log10(np.maximum(A, 1e-6))                  # 0 dB at the peak
+    top = GAIN_CURVE[-1][1]                                  # the peak sits at g = 64
+    gcode = np.interp(db + top, [p[1] for p in GAIN_CURVE], [p[0] for p in GAIN_CURVE])
+    gcode = np.clip(np.round(gcode), 64, 127).astype(np.uint8)
+    data = np.empty(2 * len(dw), dtype=np.uint8)
+    data[0::2] = dw.view(np.uint8)
+    data[1::2] = gcode
+    return data, (x, A)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("-p", "--port", default="auto")
@@ -49,6 +110,12 @@ def main():
     ap.add_argument("--nco-hz", type=int, help="move the carrier with an I/Q oscillator at this offset (stage 3 experiment)")
     ap.add_argument("--ladder", help="static register states 'a,i,b,q;a,i,b,q;...' (a,b 0..63, i,q -512..511), each held --hold ms")
     ap.add_argument("--fsk-dev", type=int, help="FSK through the PLL word: deviation in Hz (<= 20000); --rate is then the toggle rate in Hz (<= 5000)")
+    ap.add_argument("--ssb", help="SSB (USB) by polar modulation: a WAV file, or 'twotone:700,1700' (Hz), for the length --ms (<= 2400)")
+    ap.add_argument("--carrier", type=float, default=0.55, help="with --ssb: carrier amplitude as a fraction of the peak envelope (0.3..0.8)")
+    ap.add_argument("--force-g", type=int, help="with --ssb: debugging, send this gain code at every update (and no word deltas)")
+    ap.add_argument("--ssb-delay", type=float, default=1.0, help="with --ssb: delay of the gain path against the frequency path, in updates (can be negative)")
+    ap.add_argument("--dump-regs", action="store_true", help="SSB stage A: carrier on for 50 ms, print the frontend registers 0x60006000..0x60006060")
+    ap.add_argument("--backoff", help="SSB stage A: 'B0,B1,STEP,HOLDMS': the PHY's target_power_backoff(b) for b = B0..B1 (0.25 dB units?) with the carrier on")
     ap.add_argument("--gain-ladder", help="SSB stage A1: 'A,B,STEP,HOLDMS': the carrier's gain code g runs from A to B (>= 127; larger = weaker)")
     ap.add_argument("--gain-square", help="SSB stage A2: 'A,B,RATE,MS': g alternates between A and B, RATE times a second, for MS ms")
     ap.add_argument("--audio", help="speech sender: FM-modulate this WAV file (mono-mixed, band-limited, pre-emphasised, clipped); --fm-dev is the full-scale deviation, --rate the update rate")
@@ -67,7 +134,40 @@ def main():
     link = nb.open_link(args.port)
     nb.check_firmware(link)
     link.command(OP_DURATION, args.ms)
-    if args.gain_ladder or args.gain_square:
+    if args.ssb:
+        data, ref = prepare_ssb(args.ssb, args.rate or 40000, args.ms, args.carrier, args.ssb_delay)
+        if args.force_g:
+            data[1::2] = args.force_g
+            data[0::2] = 0
+        if args.save_processed:
+            data.tofile(args.save_processed)
+        link.command(OP_AUDIO_CLEAR, 0)
+        for off in range(0, len(data), 16384):
+            chunk = data[off:off + 16384].tobytes()
+            link.send(OP_AUDIO_DATA, len(chunk))
+            link.ser.write(chunk)
+            link._response(OP_AUDIO_DATA, timeout=10)
+        link.command(OP_NCO_RATE, args.rate or 40000)
+        link.send(OP_SSB, args.freq_khz)
+        status, late = link._response(OP_SSB, timeout=len(data) / 2 / (args.rate or 40000) + 8)
+        print(f"status {status} ({'ok' if status == 0 else 'failed'}); updates: {len(data) // 2} ({len(data) / 2 / (args.rate or 40000):.2f} s), late: {late}")
+    elif args.dump_regs:
+        link.send(OP_REGS, args.freq_khz | args.g << 22)
+        status, w16 = link._response(OP_REGS, timeout=8)
+        print(f"status {status}")
+        for i in range(25):
+            _, v = link.command(OP_REGS_READ, i)
+            print(f"  0x{0x60006000 + 4 * i:08X}: 0x{v:08X}")
+    elif args.backoff:
+        b0, b1, st, hold = (int(v) for v in args.backoff.split(","))
+        link.command(OP_NCO_AMP, b0)
+        link.command(OP_NCO_RATE, st & 0xFFFFFFFF)
+        link.command(OP_NCO_HZ, b1 | hold << 16)
+        link.send(OP_BACKOFF, args.freq_khz | args.g << 22)
+        n = abs(b1 - b0) // max(abs(st), 1) + 1
+        status, cyc = link._response(OP_BACKOFF, timeout=n * hold / 1000 + 8)
+        print(f"status {status} ({'ok' if status == 0 else 'failed'}); one target_power_backoff() call took {cyc} CPU cycles ({cyc / 240:.1f} us)")
+    elif args.gain_ladder or args.gain_square:
         mode = 0 if args.gain_ladder else 1
         a, b, c, d = (int(v) for v in (args.gain_ladder or args.gain_square).split(","))
         link.command(OP_NCO_AMP, b)
